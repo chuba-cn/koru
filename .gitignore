@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+.next/
+.turbo/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# Planning / brainstorming — private, not tracked
+planning/
