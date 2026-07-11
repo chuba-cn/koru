@@ -17,9 +17,11 @@ export class HealthController {
 
   @Get('db')
   async checkDb() {
-    const [churches, campaigns] = await Promise.all([
+    const [churches, campaigns, pledges, payments] = await Promise.all([
       this.prisma.church.count(),
       this.prisma.campaign.count(),
+      this.prisma.pledge.count(),
+      this.prisma.payment.count(),
     ]);
 
     return {
@@ -27,6 +29,8 @@ export class HealthController {
       db: 'reachable',
       churches,
       campaigns,
+      pledges,
+      payments,
     };
   }
 }

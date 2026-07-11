@@ -39,6 +39,47 @@ enum CampaignStatus {
   archived
 }
 
+enum PledgeCadence {
+  none
+  weekly
+  monthly
+  payday
+  custom
+}
+
+enum PledgeStatus {
+  active
+  fulfilled
+  cancelled
+}
+
+enum PledgeSource {
+  self
+  admin
+  imported
+}
+
+enum PaymentChannel {
+  paystack_transfer
+  cash
+  pos
+  imported
+}
+
+enum PaymentStatus {
+  pending
+  success
+  failed
+  reversed
+}
+
+enum WebhookStatus {
+  received
+  processed
+  ignored
+  failed
+}
+
 model Church {
   id                  String   @id @default(uuid())
   name                String
@@ -46,12 +87,12 @@ model Church {
   paystackBusinessRef String?
   createdAt           DateTime @default(now())
 
-  regions           Region[]
-  branches          Branch[]
-  members           Member[]
-  staff             Staff[]
+  regions            Region[]
+  branches           Branch[]
+  members            Member[]
+  staff              Staff[]
   settlementAccounts SettlementAccount[]
-  campaigns         Campaign[]
+  campaigns          Campaign[]
 }
 
 model Region {
@@ -85,13 +126,15 @@ model Branch {
 }
 
 model Member {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   churchId     String
   homeBranchId String
   fullName     String
   phone        String
   email        String?
-  createdAt    DateTime @default(now())
+  pledges      Pledge[]
+  payments     Payment[]
+  createdAt    DateTime  @default(now())
 
   church     Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
   homeBranch Branch @relation(fields: [homeBranchId], references: [id])
@@ -101,13 +144,14 @@ model Member {
 }
 
 model Staff {
-  id           String    @id @default(uuid())
-  churchId     String
-  fullName     String
-  email        String
-  passwordHash String
-  role         StaffRole
-  createdAt    DateTime  @default(now())
+  id               String    @id @default(uuid())
+  churchId         String
+  fullName         String
+  email            String
+  passwordHash     String
+  role             StaffRole
+  paymentsRecorded Payment[]
+  createdAt        DateTime  @default(now())
 
   church           Church       @relation(fields: [churchId], references: [id], onDelete: Cascade)
   scopes           StaffScope[]
@@ -158,6 +202,8 @@ model Campaign {
   startDate           DateTime?
   endDate             DateTime?
   status              CampaignStatus    @default(draft)
+  pledges             Pledge[]
+  payments            Payment[]
 
   createdById String?
   createdAt   DateTime @default(now())
@@ -169,4 +215,59 @@ model Campaign {
   @@index([churchId])
   @@index([settlementAccountId])
   @@index([scopeType, scopeRefId])
+}
+
+model Pledge {
+  id               String        @id @default(uuid())
+  campaignId       String
+  memberId         String
+  pledgeAmountKobo BigInt
+  cadence          PledgeCadence @default(none)
+  status           PledgeStatus  @default(active)
+  source           PledgeSource  @default(self)
+  createdAt        DateTime      @default(now())
+
+  campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  member   Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@index([campaignId])
+  @@index([memberId])
+}
+
+model Payment {
+  id                   String         @id @default(uuid())
+  campaignId           String
+  memberId             String?
+  pledgeId             String?
+  amountKobo           BigInt
+  channel              PaymentChannel
+  status               PaymentStatus  @default(pending)
+  paystackReference    String?        @unique
+  virtualAccountNumber String?
+  virtualAcoountBank   String?
+  expiresAt            DateTime?
+  recordedById         String?
+  paidAt               DateTime?
+  createdAt            DateTime       @default(now())
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  member     Member?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  pledge     Pledge?  @relation(fields: [pledgeId], references: [id], onDelete: SetNull)
+  recordedBy Staff?   @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@index([campaignId])
+  @@index([memberId])
+  @@index([pledgeId])
+  @@index([status])
+}
+
+model WebhookEvent {
+  id              String        @default(uuid())
+  paystackEventId String        @unique
+  type            String
+  payload         Json
+  status          WebhookStatus @default(received)
+  processedAt     DateTime?
+  createdAt       DateTime      @default(now())
 }
