@@ -25,6 +25,20 @@ enum ScopeType {
   branch
 }
 
+enum CampaignScopeType {
+  church
+  region
+  branch
+}
+
+enum CampaignStatus {
+  draft
+  active
+  paused
+  completed
+  archived
+}
+
 model Church {
   id                  String   @id @default(uuid())
   name                String
@@ -32,10 +46,12 @@ model Church {
   paystackBusinessRef String?
   createdAt           DateTime @default(now())
 
-  regions  Region[]
-  branches Branch[]
-  members  Member[]
-  staff    Staff[]
+  regions           Region[]
+  branches          Branch[]
+  members           Member[]
+  staff             Staff[]
+  settlementAccounts SettlementAccount[]
+  campaigns         Campaign[]
 }
 
 model Region {
@@ -59,9 +75,10 @@ model Branch {
   address   String?
   createdAt DateTime @default(now())
 
-  church  Church   @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  region  Region?   @relation(fields: [regionId], references: [id], onDelete: SetNull)
-  members Member[]
+  church             Church              @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  region             Region?             @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  members            Member[]
+  settlementAccounts SettlementAccount[]
 
   @@index([churchId])
   @@index([regionId])
@@ -92,8 +109,9 @@ model Staff {
   role         StaffRole
   createdAt    DateTime  @default(now())
 
-  church Church       @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  scopes StaffScope[]
+  church           Church       @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  scopes           StaffScope[]
+  campaignsCreated Campaign[]
 
   @@unique([churchId, email])
 }
@@ -107,4 +125,48 @@ model StaffScope {
   staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@index([staffId])
+}
+
+model SettlementAccount {
+  id                     String   @id @default(uuid())
+  churchId               String
+  branchId               String?
+  label                  String
+  paystackSubaccountCode String?
+  bankName               String?
+  accountNumberMasked    String?
+  createdAt              DateTime @default(now())
+
+  church    Church     @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  branch    Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  campaigns Campaign[]
+
+  @@index([churchId])
+  @@index([branchId])
+}
+
+model Campaign {
+  id                  String            @id @default(uuid())
+  churchId            String
+  title               String
+  description         String?
+  scopeType           CampaignScopeType
+  scopeRefId          String?
+  settlementAccountId String
+  targetAmountKobo    BigInt
+  currency            String            @default("NGN")
+  startDate           DateTime?
+  endDate             DateTime?
+  status              CampaignStatus    @default(draft)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  church            Church            @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  settlementAccount SettlementAccount @relation(fields: [settlementAccountId], references: [id])
+  createdBy         Staff?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([churchId])
+  @@index([settlementAccountId])
+  @@index([scopeType, scopeRefId])
 }

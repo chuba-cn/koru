@@ -8,7 +8,8 @@
     "start": "node dist/main.js",
     "check-types": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:generate": "prisma generate"
   },
   "dependencies": {
     "@koru/shared": "workspace:*",

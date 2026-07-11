@@ -17,11 +17,16 @@ export class HealthController {
 
   @Get('db')
   async checkDb() {
-    const churches = await this.prisma.church.count();
+    const [churches, campaigns] = await Promise.all([
+      this.prisma.church.count(),
+      this.prisma.campaign.count(),
+    ]);
+
     return {
       status: 'ok',
       db: 'reachable',
       churches,
+      campaigns,
     };
   }
 }
