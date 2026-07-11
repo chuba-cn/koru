@@ -7,3 +7,5 @@ export const nairaToKobo = (naira: number): Kobo => {
 export const koboToNaira = (kobo: Kobo): number => {
   return kobo / 100;
 };
+
+export * from './schemas.js';
