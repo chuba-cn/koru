@@ -1,0 +1,110 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum StaffRole {
+  super_admin
+  regional_admin
+  branch_admin
+  finance
+}
+
+enum ScopeType {
+  region
+  branch
+}
+
+model Church {
+  id                  String   @id @default(uuid())
+  name                String
+  timezone            String   @default("Africa/Lagos")
+  paystackBusinessRef String?
+  createdAt           DateTime @default(now())
+
+  regions  Region[]
+  branches Branch[]
+  members  Member[]
+  staff    Staff[]
+}
+
+model Region {
+  id        String   @id @default(uuid())
+  churchId  String
+  name      String
+  state     String
+  createdAt DateTime @default(now())
+
+  church   Church   @relation(fields: [churchId], references: [id])
+  branches Branch[]
+
+  @@index([churchId])
+}
+
+model Branch {
+  id        String   @id @default(uuid())
+  churchId  String
+  regionId  String?
+  name      String
+  address   String?
+  createdAt DateTime @default(now())
+
+  church  Church   @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  region  Region?   @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  members Member[]
+
+  @@index([churchId])
+  @@index([regionId])
+}
+
+model Member {
+  id           String   @id @default(uuid())
+  churchId     String
+  homeBranchId String
+  fullName     String
+  phone        String
+  email        String?
+  createdAt    DateTime @default(now())
+
+  church     Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  homeBranch Branch @relation(fields: [homeBranchId], references: [id])
+
+  @@unique([churchId, phone])
+  @@index([homeBranchId])
+}
+
+model Staff {
+  id           String    @id @default(uuid())
+  churchId     String
+  fullName     String
+  email        String
+  passwordHash String
+  role         StaffRole
+  createdAt    DateTime  @default(now())
+
+  church Church       @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  scopes StaffScope[]
+
+  @@unique([churchId, email])
+}
+
+model StaffScope {
+  id         String    @id @default(uuid())
+  staffId    String
+  scopeType  ScopeType
+  scopeRefId String
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+}

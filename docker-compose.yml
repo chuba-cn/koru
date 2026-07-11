@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: koru-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: koru
+      POSTGRES_PASSWORD: Samsung29&&
+      POSTGRES_DB: koru
+    ports:
+      - '5432:5432'
+    volumes:
+      - koru_pgdata:/var/lib/postgresql/data
+
+volumes:
+  koru_pgdata:

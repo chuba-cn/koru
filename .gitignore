@@ -20,3 +20,10 @@ build/
 
 # Planning / brainstorming — private, not tracked
 planning/
+
+# Prisma generated client
+apps/api/src/generated/
+
+# Ephemeral teach-by-doing step files (deleted after each step)
+build-steps/
+

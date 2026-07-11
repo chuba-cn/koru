@@ -17,6 +17,12 @@
   "linter": {
     "enabled": true,
     "rules": {
+      "complexity": {
+        "useLiteralKeys": "off"
+      },
+      "style": {
+        "useImportType": "off"
+      },
       "preset": "recommended"
     }
   },
