@@ -106,6 +106,7 @@ model Region {
   branches Branch[]
 
   @@index([churchId])
+  @@unique([churchId, name])
 }
 
 model Branch {

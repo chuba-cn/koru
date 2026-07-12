@@ -9,4 +9,5 @@ export const koboToNaira = (kobo: Kobo): number => {
 };
 
 export * from './church.js';
+export * from './region.js';
 export * from './schemas.js';
