@@ -1,31 +1,46 @@
-import {
-  CreateChurchInput,
-  CreateChurchSchema,
-  UpdateChurchInput,
-  UpdateChurchSchema,
-} from '@koru/shared';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import {
+  ApiBadRequestResponse,
+  ApiCreatedResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { ChurchDto, CreateChurchDto, UpdateChurchDto } from './church.dto';
 import { ChurchService } from './church.service';
 
+@ApiTags('churches')
 @Controller('churches')
 export class ChurchController {
   constructor(private readonly churchService: ChurchService) {}
 
   @Post()
-  create(@Body(new ZodValidationPipe(CreateChurchSchema)) body: CreateChurchInput) {
+  @ApiOperation({ summary: 'Create a church' })
+  @ApiCreatedResponse({ type: ChurchDto })
+  @ApiBadRequestResponse({ description: 'Validation failed (field errors in body)' })
+  create(@Body(new ZodValidationPipe(CreateChurchDto.schema)) body: CreateChurchDto) {
     return this.churchService.create(body);
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Get a church by ID' })
+  @ApiOkResponse({ type: ChurchDto })
+  @ApiNotFoundResponse({ description: 'Church not found' })
+  @ApiBadRequestResponse({ description: 'Malformed UUID' })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.churchService.findById(id);
   }
 
   @Patch(':id')
+  @ApiOperation({ summary: 'Update a church' })
+  @ApiOkResponse({ type: ChurchDto })
+  @ApiNotFoundResponse({ description: 'Church not found' })
+  @ApiBadRequestResponse({ description: 'Validation failed or malformed UUID' })
   update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(new ZodValidationPipe(UpdateChurchSchema)) body: UpdateChurchInput,
+    @Body(new ZodValidationPipe(UpdateChurchDto.schema)) body: UpdateChurchDto,
   ) {
     return this.churchService.update(id, body);
   }
