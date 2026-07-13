@@ -124,6 +124,7 @@ model Branch {
 
   @@index([churchId])
   @@index([regionId])
+  @@unique([churchId, name])
 }
 
 model Member {

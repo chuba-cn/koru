@@ -19,7 +19,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       const statusCode = exception.getStatus();
       const raw = exception.getResponse();
-      const base: Record<string, any> = typeof raw === 'string' ? { message: raw } : { ...raw };
+      const base: Record<string, unknown> = typeof raw === 'string' ? { message: raw } : { ...raw };
 
       const body: ErrorResponse = {
         statusCode,

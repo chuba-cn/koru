@@ -16,7 +16,9 @@ A grouping of Branches, usually a Nigerian state.
 _Avoid_: State, Zone, Area
 
 **Branch**:
-A single physical congregation belonging to a Church.
+A single physical congregation belonging to a Church. Its name is the church-wide handle people
+use to identify it, so it is unique within the Church (not merely within a Region) — colliding
+localities are disambiguated in the name itself (e.g. "Victoria Island (Lagos)").
 _Avoid_: Location, Site, Parish
 
 **Member**:
