@@ -20,6 +20,7 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CreateRegionDto, RegionDto, UpdateRegionDto } from './region.dto';
 import { RegionService } from './region.service';
@@ -32,9 +33,15 @@ export class RegionController {
   @Post()
   @ApiOperation({ summary: 'Create a region in a church' })
   @ApiCreatedResponse({ type: RegionDto })
-  @ApiNotFoundResponse({ description: 'Church not found' })
-  @ApiConflictResponse({ description: 'Region name already exists in this church' })
-  @ApiBadRequestResponse({ description: 'Validation failed or malformed UUID' })
+  @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
+  @ApiConflictResponse({
+    description: 'Region name already exists in this church',
+    type: ErrorResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Validation failed or malformed UUID',
+    type: ErrorResponseDto,
+  })
   create(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Body(new ZodValidationPipe(CreateRegionDto.schema)) body: CreateRegionDto,
@@ -45,7 +52,7 @@ export class RegionController {
   @Get()
   @ApiOperation({ summary: 'List regions of a church' })
   @ApiOkResponse({ type: RegionDto, isArray: true })
-  @ApiNotFoundResponse({ description: 'Church not found' })
+  @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
   list(@Param('churchId', ParseUUIDPipe) churchId: string) {
     return this.regionService.list(churchId);
   }
@@ -53,9 +60,15 @@ export class RegionController {
   @Patch(':id')
   @ApiOperation({ summary: 'Rename/update a region' })
   @ApiOkResponse({ type: RegionDto })
-  @ApiNotFoundResponse({ description: 'Church or region not found' })
-  @ApiConflictResponse({ description: 'Region name already exists in this church' })
-  @ApiBadRequestResponse({ description: 'Validation failed or malformed UUID' })
+  @ApiNotFoundResponse({ description: 'Church or region not found', type: ErrorResponseDto })
+  @ApiConflictResponse({
+    description: 'Region name already exists in this church',
+    type: ErrorResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Validation failed or malformed UUID',
+    type: ErrorResponseDto,
+  })
   update(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -68,8 +81,8 @@ export class RegionController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete an empty region' })
   @ApiNoContentResponse({ description: 'Region deleted' })
-  @ApiNotFoundResponse({ description: 'Church or region not found' })
-  @ApiConflictResponse({ description: 'Region still has branches' })
+  @ApiNotFoundResponse({ description: 'Church or region not found', type: ErrorResponseDto })
+  @ApiConflictResponse({ description: 'Region still has branches', type: ErrorResponseDto })
   remove(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Param('id', ParseUUIDPipe) id: string,
