@@ -13,3 +13,4 @@ export * from './branch.js';
 export * from './church.js';
 export * from './region.js';
 export * from './schemas.js';
+export * from './staff.js';

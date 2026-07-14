@@ -150,7 +150,7 @@ model Staff {
   churchId         String
   fullName         String
   email            String
-  passwordHash     String
+  passwordHash     String?
   role             StaffRole
   paymentsRecorded Payment[]
   createdAt        DateTime  @default(now())
