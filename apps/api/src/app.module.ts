@@ -6,10 +6,19 @@ import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RegionModule } from './region/region.module';
+import { SettlementAccountModule } from './settlement-account/settlement-account.module';
 import { StaffModule } from './staff/staff.module';
 
 @Module({
-  imports: [HealthModule, PrismaModule, ChurchModule, RegionModule, BranchModule, StaffModule],
+  imports: [
+    HealthModule,
+    PrismaModule,
+    ChurchModule,
+    RegionModule,
+    BranchModule,
+    StaffModule,
+    SettlementAccountModule,
+  ],
   providers: [
     {
       provide: APP_FILTER,

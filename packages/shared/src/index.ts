@@ -11,6 +11,8 @@ export const koboToNaira = (kobo: Kobo): number => {
 export * from './api.js';
 export * from './branch.js';
 export * from './church.js';
+export * from './mask.js';
 export * from './region.js';
 export * from './schemas.js';
+export * from './settlement-account.js';
 export * from './staff.js';
