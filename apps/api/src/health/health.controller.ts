@@ -1,9 +1,11 @@
 import { koboToNaira } from '@koru/shared';
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('health')
+@AllowAnonymous()
 @Controller('health')
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}

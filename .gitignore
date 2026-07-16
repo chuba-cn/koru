@@ -27,3 +27,9 @@ apps/api/src/generated/
 # Ephemeral teach-by-doing step files (deleted after each step)
 build-steps/
 
+# Generated OpenAPI dumps — the live spec is served at /schema.json and /schema.yaml
+koru-api.json
+koru-api.yaml
+koru-auth-api.json
+apps/api/api-schema.json
+

@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { GlobalExceptionFilter } from '../src/common/global-exception.filter';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createAuthedChurch } from './auth-utils';
 import { truncateAll } from './db-utils';
 
 describe('Error contract (e2e)', () => {
@@ -27,8 +28,12 @@ describe('Error contract (e2e)', () => {
   });
 
   it('404 conforms to the standard shape', async () => {
+    const { cookie, churchId } = await createAuthedChurch(app);
+
     const res = await request(app.getHttpServer())
-      .get('/churches/6f9619ff-8b86-d011-b42d-00c04fc964ff')
+      .patch(`/churches/${churchId}/regions/6f9619ff-8b86-d011-b42d-00c04fc964ff`)
+      .set('Cookie', cookie)
+      .send({ name: 'Ghost' })
       .expect(404);
 
     expect(res.body.statusCode).toBe(404);
@@ -38,8 +43,11 @@ describe('Error contract (e2e)', () => {
   });
 
   it('validation 400 conforms and carries per-field errors', async () => {
+    const { cookie, churchId } = await createAuthedChurch(app);
+
     const res = await request(app.getHttpServer())
-      .post('/churches')
+      .post(`/churches/${churchId}/regions`)
+      .set('Cookie', cookie)
       .send({ name: 'x' })
       .expect(400);
 
@@ -50,7 +58,13 @@ describe('Error contract (e2e)', () => {
   });
 
   it('malformed-UUID 400 (ParseUUIDPipe) conforms', async () => {
-    const res = await request(app.getHttpServer()).get('/churches/not-a-uuid').expect(400);
+    const { cookie, churchId } = await createAuthedChurch(app);
+
+    const res = await request(app.getHttpServer())
+      .patch(`/churches/${churchId}/regions/not-a-uuid`)
+      .set('Cookie', cookie)
+      .send({ name: 'x' })
+      .expect(400);
 
     expect(res.body.statusCode).toBe(400);
     expect(res.body.error).toBe('BAD_REQUEST');
@@ -58,17 +72,17 @@ describe('Error contract (e2e)', () => {
   });
 
   it('409 conflict conforms', async () => {
-    const church = await request(app.getHttpServer())
-      .post('/churches')
-      .send({ name: 'Celebration Church' })
-      .expect(201);
+    const { cookie, churchId } = await createAuthedChurch(app);
+
     await request(app.getHttpServer())
-      .post(`/churches/${church.body.id}/regions`)
+      .post(`/churches/${churchId}/regions`)
+      .set('Cookie', cookie)
       .send({ name: 'Abuja (FCT)', state: 'FCT' })
       .expect(201);
 
     const res = await request(app.getHttpServer())
-      .post(`/churches/${church.body.id}/regions`)
+      .post(`/churches/${churchId}/regions`)
+      .set('Cookie', cookie)
       .send({ name: 'Abuja (FCT)', state: 'FCT' })
       .expect(409);
 
@@ -77,8 +91,6 @@ describe('Error contract (e2e)', () => {
   });
 });
 
-// A throwaway controller that crashes on purpose — same in-test-controller trick
-// as the validation spec — to prove unexpected errors are shaped and don't leak.
 @Controller('boom')
 class BoomController {
   @Get()

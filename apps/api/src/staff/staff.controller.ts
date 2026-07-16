@@ -10,17 +10,23 @@ import {
   Patch,
   Post,
   Put,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { RolesGuard } from '../auth/roles.guard';
+import { StaffRoles } from '../auth/staff-roles.decorator';
+import { TenantGuard } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CreateStaffDto, ReplaceScopesDto, StaffDto, UpdateStaffDto } from './staff.dto';
@@ -28,6 +34,13 @@ import { StaffService } from './staff.service';
 
 @ApiTags('staff')
 @Controller('churches/:churchId/staff')
+@UseGuards(TenantGuard, RolesGuard)
+@StaffRoles('super_admin')
+@ApiUnauthorizedResponse({ description: 'No active session', type: ErrorResponseDto })
+@ApiForbiddenResponse({
+  description: 'Church does not belong to the session, or role is not super_admin',
+  type: ErrorResponseDto,
+})
 export class StaffController {
   constructor(private readonly staffService: StaffService) {}
 

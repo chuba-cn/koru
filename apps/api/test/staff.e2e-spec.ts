@@ -3,24 +3,18 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createAuthedChurch, createAuthedChurchWithRegion } from './auth-utils';
 import { truncateAll } from './db-utils';
 
-async function createChurch(app: INestApplication, name = 'Celebration Church') {
-  const res = await request(app.getHttpServer()).post('/churches').send({ name }).expect(201);
-  return res.body as { id: string };
-}
-
-async function createRegion(app: INestApplication, churchId: string, name = 'Abuja (FCT)') {
-  const res = await request(app.getHttpServer())
-    .post(`/churches/${churchId}/regions`)
-    .send({ name, state: 'FCT' })
-    .expect(201);
-  return res.body as { id: string };
-}
-
-async function createBranch(app: INestApplication, churchId: string, name = 'KORU Abuja') {
+async function createBranch(
+  app: INestApplication,
+  churchId: string,
+  cookie: string,
+  name = 'KORU Abuja',
+) {
   const res = await request(app.getHttpServer())
     .post(`/churches/${churchId}/branches`)
+    .set('Cookie', cookie)
     .send({ name })
     .expect(201);
   return res.body as { id: string };
@@ -46,9 +40,11 @@ describe('Staff (e2e)', () => {
   });
 
   it('registers staff without scopes and never exposes passwordHash', async () => {
-    const church = await createChurch(app);
+    const { cookie, churchId } = await createAuthedChurch(app);
+
     const res = await request(app.getHttpServer())
-      .post(`/churches/${church.id}/staff`)
+      .post(`/churches/${churchId}/staff`)
+      .set('Cookie', cookie)
       .send({ fullName: 'Ada Obi', email: 'ada@example.com', role: 'finance' })
       .expect(201);
 
@@ -59,18 +55,18 @@ describe('Staff (e2e)', () => {
   });
 
   it('registers staff with mixed region + branch scopes in one call', async () => {
-    const church = await createChurch(app);
-    const region = await createRegion(app, church.id);
-    const branch = await createBranch(app, church.id);
+    const { cookie, churchId, regionId } = await createAuthedChurchWithRegion(app);
+    const branch = await createBranch(app, churchId, cookie);
 
     const res = await request(app.getHttpServer())
-      .post(`/churches/${church.id}/staff`)
+      .post(`/churches/${churchId}/staff`)
+      .set('Cookie', cookie)
       .send({
         fullName: 'Ada Obi',
         email: 'ada@example.com',
         role: 'regional_admin',
         scopes: [
-          { scopeType: 'region', scopeRefId: region.id },
+          { scopeType: 'region', scopeRefId: regionId },
           { scopeType: 'branch', scopeRefId: branch.id },
         ],
       })
@@ -82,34 +78,39 @@ describe('Staff (e2e)', () => {
   });
 
   it('rejects duplicate email within a church (409), allows it in another church', async () => {
-    const churchA = await createChurch(app, 'Church A');
-    const churchB = await createChurch(app, 'Church B');
+    const alice = await createAuthedChurch(app, { emailPrefix: 'alice' });
+    const bob = await createAuthedChurch(app, { emailPrefix: 'bob' });
     const staff = { fullName: 'Ada Obi', email: 'ada@example.com', role: 'finance' };
 
     await request(app.getHttpServer())
-      .post(`/churches/${churchA.id}/staff`)
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
       .send(staff)
       .expect(201);
 
     const dup = await request(app.getHttpServer())
-      .post(`/churches/${churchA.id}/staff`)
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
       .send(staff)
       .expect(409);
+
     expect(dup.body.error).toBe('CONFLICT');
 
     await request(app.getHttpServer())
-      .post(`/churches/${churchB.id}/staff`)
+      .post(`/churches/${bob.churchId}/staff`)
+      .set('Cookie', bob.cookie)
       .send(staff)
       .expect(201);
   });
 
   it('rejects scopes referencing another church or nothing at all (400, names the culprits)', async () => {
-    const churchA = await createChurch(app, 'Church A');
-    const churchB = await createChurch(app, 'Church B');
-    const branchB = await createBranch(app, churchB.id);
+    const alice = await createAuthedChurch(app, { emailPrefix: 'alice' });
+    const bob = await createAuthedChurch(app, { emailPrefix: 'bob' });
+    const branchB = await createBranch(app, bob.churchId, bob.cookie);
 
     const res = await request(app.getHttpServer())
-      .post(`/churches/${churchA.id}/staff`)
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
       .send({
         fullName: 'Ada Obi',
         email: 'ada@example.com',
@@ -123,50 +124,60 @@ describe('Staff (e2e)', () => {
   });
 
   it('rejects duplicate scope pairs in one payload (400 from the Zod refine)', async () => {
-    const church = await createChurch(app);
-    const region = await createRegion(app, church.id);
+    const { cookie, churchId, regionId } = await createAuthedChurchWithRegion(app);
 
     const res = await request(app.getHttpServer())
-      .post(`/churches/${church.id}/staff`)
+      .post(`/churches/${churchId}/staff`)
+      .set('Cookie', cookie)
       .send({
         fullName: 'Ada Obi',
         email: 'ada@example.com',
         role: 'regional_admin',
         scopes: [
-          { scopeType: 'region', scopeRefId: region.id },
-          { scopeType: 'region', scopeRefId: region.id },
+          { scopeType: 'region', scopeRefId: regionId },
+          { scopeType: 'region', scopeRefId: regionId },
         ],
       })
       .expect(400);
+
     expect(res.body.errors.scopes).toBeDefined();
   });
 
   it('lists staff with their scopes', async () => {
-    const church = await createChurch(app);
-    const region = await createRegion(app, church.id);
+    const { cookie, churchId, regionId } = await createAuthedChurchWithRegion(app);
+
     await request(app.getHttpServer())
-      .post(`/churches/${church.id}/staff`)
+      .post(`/churches/${churchId}/staff`)
+      .set('Cookie', cookie)
       .send({
         fullName: 'Ada Obi',
         email: 'ada@example.com',
         role: 'regional_admin',
-        scopes: [{ scopeType: 'region', scopeRefId: region.id }],
+        scopes: [{ scopeType: 'region', scopeRefId: regionId }],
       })
       .expect(201);
 
-    const list = await request(app.getHttpServer()).get(`/churches/${church.id}/staff`).expect(200);
-    expect(list.body).toHaveLength(1);
-    expect(list.body[0].scopes).toHaveLength(1);
-    expect(list.body[0].passwordHash).toBeUndefined();
+    const list = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/staff`)
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(list.body.every((s: { passwordHash: unknown }) => s.passwordHash === undefined)).toBe(
+      true,
+    );
+
+    const ada = list.body.find((s: { email: string }) => s.email === 'ada@example.com');
+    expect(ada).toBeDefined();
+    expect(ada.scopes).toHaveLength(1);
   });
 
   it('updates role via PATCH and replaces scopes wholesale via PUT (empty array clears)', async () => {
-    const church = await createChurch(app);
-    const region = await createRegion(app, church.id);
-    const branch = await createBranch(app, church.id);
+    const { cookie, churchId, regionId } = await createAuthedChurchWithRegion(app);
+    const branch = await createBranch(app, churchId, cookie);
 
     const staff = await request(app.getHttpServer())
-      .post(`/churches/${church.id}/staff`)
+      .post(`/churches/${churchId}/staff`)
+      .set('Cookie', cookie)
       .send({
         fullName: 'Ada Obi',
         email: 'ada@example.com',
@@ -176,41 +187,49 @@ describe('Staff (e2e)', () => {
       .expect(201);
 
     const promoted = await request(app.getHttpServer())
-      .patch(`/churches/${church.id}/staff/${staff.body.id}`)
+      .patch(`/churches/${churchId}/staff/${staff.body.id}`)
+      .set('Cookie', cookie)
       .send({ role: 'regional_admin' })
       .expect(200);
+
     expect(promoted.body.role).toBe('regional_admin');
     expect(promoted.body.scopes).toHaveLength(1);
 
     const replaced = await request(app.getHttpServer())
-      .put(`/churches/${church.id}/staff/${staff.body.id}/scopes`)
-      .send({ scopes: [{ scopeType: 'region', scopeRefId: region.id }] })
+      .put(`/churches/${churchId}/staff/${staff.body.id}/scopes`)
+      .set('Cookie', cookie)
+      .send({ scopes: [{ scopeType: 'region', scopeRefId: regionId }] })
       .expect(200);
+
     expect(replaced.body.scopes).toHaveLength(1);
     expect(replaced.body.scopes[0].scopeType).toBe('region');
 
     const cleared = await request(app.getHttpServer())
-      .put(`/churches/${church.id}/staff/${staff.body.id}/scopes`)
+      .put(`/churches/${churchId}/staff/${staff.body.id}/scopes`)
+      .set('Cookie', cookie)
       .send({ scopes: [] })
       .expect(200);
+
     expect(cleared.body.scopes).toEqual([]);
   });
 
   it('deletes staff and cascades their scopes at the DB level', async () => {
-    const church = await createChurch(app);
-    const region = await createRegion(app, church.id);
+    const { cookie, churchId, regionId } = await createAuthedChurchWithRegion(app);
+
     const staff = await request(app.getHttpServer())
-      .post(`/churches/${church.id}/staff`)
+      .post(`/churches/${churchId}/staff`)
+      .set('Cookie', cookie)
       .send({
         fullName: 'Ada Obi',
         email: 'ada@example.com',
         role: 'regional_admin',
-        scopes: [{ scopeType: 'region', scopeRefId: region.id }],
+        scopes: [{ scopeType: 'region', scopeRefId: regionId }],
       })
       .expect(201);
 
     await request(app.getHttpServer())
-      .delete(`/churches/${church.id}/staff/${staff.body.id}`)
+      .delete(`/churches/${churchId}/staff/${staff.body.id}`)
+      .set('Cookie', cookie)
       .expect(204);
 
     const orphanCount = await prisma.staffScope.count();
@@ -218,25 +237,31 @@ describe('Staff (e2e)', () => {
   });
 
   it('isolates tenants: church B cannot see, update, or delete church A staff', async () => {
-    const churchA = await createChurch(app, 'Church A');
-    const churchB = await createChurch(app, 'Church B');
-    const staff = await request(app.getHttpServer())
-      .post(`/churches/${churchA.id}/staff`)
+    const alice = await createAuthedChurch(app, { emailPrefix: 'alice' });
+    const bob = await createAuthedChurch(app, { emailPrefix: 'bob' });
+
+    const ada = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
       .send({ fullName: 'Ada Obi', email: 'ada@example.com', role: 'finance' })
       .expect(201);
 
     const list = await request(app.getHttpServer())
-      .get(`/churches/${churchB.id}/staff`)
+      .get(`/churches/${bob.churchId}/staff`)
+      .set('Cookie', bob.cookie)
       .expect(200);
-    expect(list.body).toHaveLength(0);
+
+    expect(list.body.map((s: { id: string }) => s.id)).not.toContain(ada.body.id);
 
     await request(app.getHttpServer())
-      .patch(`/churches/${churchB.id}/staff/${staff.body.id}`)
+      .patch(`/churches/${bob.churchId}/staff/${ada.body.id}`)
+      .set('Cookie', bob.cookie)
       .send({ role: 'super_admin' })
       .expect(404);
 
     await request(app.getHttpServer())
-      .delete(`/churches/${churchB.id}/staff/${staff.body.id}`)
+      .delete(`/churches/${bob.churchId}/staff/${ada.body.id}`)
+      .set('Cookie', bob.cookie)
       .expect(404);
   });
 });

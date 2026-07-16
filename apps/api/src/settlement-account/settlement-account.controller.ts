@@ -1,12 +1,27 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { RolesGuard } from '../auth/roles.guard';
+import { StaffRoles } from '../auth/staff-roles.decorator';
+import { TenantGuard } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import {
@@ -19,6 +34,13 @@ import { SettlementAccountService } from './settlement-account.service';
 
 @ApiTags('settlement-accounts')
 @Controller('churches/:churchId/settlement-accounts')
+@UseGuards(TenantGuard, RolesGuard)
+@StaffRoles('super_admin')
+@ApiUnauthorizedResponse({ description: 'No active session', type: ErrorResponseDto })
+@ApiForbiddenResponse({
+  description: 'Church does not belong to the session, or role is not super_admin',
+  type: ErrorResponseDto,
+})
 export class SettlementAccountController {
   constructor(private readonly service: SettlementAccountService) {}
 

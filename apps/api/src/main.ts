@@ -1,25 +1,19 @@
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { cleanupOpenApiDoc } from 'nestjs-zod';
 import { AppModule } from './app.module';
+import { setupDocs } from './docs/setup-docs';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
 
-  const config = new DocumentBuilder()
-    .setTitle('KORU API')
-    .setDescription('Church pledge & project-giving platform - API reference')
-    .setVersion('0.1.0')
-    .build();
-
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, cleanupOpenApiDoc(document));
+  setupDocs(app);
 
   const port = process.env.PORT ?? 3001;
   await app.listen(port);
   console.log(`KORU API running on http://localhost:${port}`);
-  console.log(`API docs at http://localhost:${port}/docs`);
+  console.log(`Domain API docs at http://localhost:${port}/docs`);
+  console.log(`OpenAPI schema at http://localhost:${port}/schema.json (or /schema.yaml)`);
+  console.log(`Auth API docs at http://localhost:${port}/api/auth/reference`);
 }
 
 bootstrap();

@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
+import { AuthModule } from '@thallesp/nestjs-better-auth';
+import { auth } from './auth/auth';
 import { BranchModule } from './branch/branch.module';
 import { ChurchModule } from './church/church.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { HealthModule } from './health/health.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RegionModule } from './region/region.module';
 import { SettlementAccountModule } from './settlement-account/settlement-account.module';
@@ -18,6 +21,8 @@ import { StaffModule } from './staff/staff.module';
     BranchModule,
     StaffModule,
     SettlementAccountModule,
+    OnboardingModule,
+    AuthModule.forRoot({ auth }),
   ],
   providers: [
     {

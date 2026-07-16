@@ -13,6 +13,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
+    "@better-auth/prisma-adapter": "^1.6.23",
     "@koru/shared": "workspace:*",
     "@nestjs/common": "^11.1.28",
     "@nestjs/core": "^11.1.28",
@@ -20,6 +21,9 @@
     "@nestjs/swagger": "^11.4.5",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@scalar/nestjs-api-reference": "^1.2.10",
+    "@thallesp/nestjs-better-auth": "^2.7.0",
+    "better-auth": "^1.6.23",
     "nestjs-zod": "^5.4.0",
     "pg": "^8.22.0",
     "reflect-metadata": "^0.2.2",

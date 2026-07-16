@@ -105,8 +105,8 @@ model Region {
   church   Church   @relation(fields: [churchId], references: [id])
   branches Branch[]
 
-  @@index([churchId])
   @@unique([churchId, name])
+  @@index([churchId])
 }
 
 model Branch {
@@ -122,9 +122,9 @@ model Branch {
   members            Member[]
   settlementAccounts SettlementAccount[]
 
+  @@unique([churchId, name])
   @@index([churchId])
   @@index([regionId])
-  @@unique([churchId, name])
 }
 
 model Member {
@@ -138,10 +138,13 @@ model Member {
   payments     Payment[]
   createdAt    DateTime  @default(now())
 
-  church     Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  homeBranch Branch @relation(fields: [homeBranchId], references: [id])
+  church     Church  @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  homeBranch Branch  @relation(fields: [homeBranchId], references: [id])
+  userId     String?
+  user       User?   @relation("MemberUser", fields: [userId], references: [id], onDelete: SetNull)
 
   @@unique([churchId, phone])
+  @@index([userId])
   @@index([homeBranchId])
 }
 
@@ -158,6 +161,8 @@ model Staff {
   church           Church       @relation(fields: [churchId], references: [id], onDelete: Cascade)
   scopes           StaffScope[]
   campaignsCreated Campaign[]
+  userId           String?      @unique
+  user             User?        @relation("StaffUser", fields: [userId], references: [id], onDelete: SetNull)
 
   @@unique([churchId, email])
 }
@@ -262,6 +267,71 @@ model Payment {
   @@index([memberId])
   @@index([pledgeId])
   @@index([status])
+}
+
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  staff         Staff[]   @relation("StaffUser")
+  members       Member[]  @relation("MemberUser")
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
 }
 
 model WebhookEvent {

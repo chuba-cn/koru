@@ -9,17 +9,21 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { TenantGuard } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CreateRegionDto, RegionDto, UpdateRegionDto } from './region.dto';
@@ -27,6 +31,12 @@ import { RegionService } from './region.service';
 
 @ApiTags('regions')
 @Controller('churches/:churchId/regions')
+@UseGuards(TenantGuard)
+@ApiUnauthorizedResponse({ description: 'No active session', type: ErrorResponseDto })
+@ApiForbiddenResponse({
+  description: 'Church does not belong to the session',
+  type: ErrorResponseDto,
+})
 export class RegionController {
   constructor(private readonly regionService: RegionService) {}
 

@@ -1,43 +1,44 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { RolesGuard } from '../auth/roles.guard';
+import { StaffRoles } from '../auth/staff-roles.decorator';
+import { TenantGuard } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { ChurchDto, CreateChurchDto, UpdateChurchDto } from './church.dto';
+import { ChurchDto, UpdateChurchDto } from './church.dto';
 import { ChurchService } from './church.service';
 
 @ApiTags('churches')
 @Controller('churches')
+@UseGuards(TenantGuard)
+@ApiUnauthorizedResponse({ description: 'No active session', type: ErrorResponseDto })
+@ApiForbiddenResponse({
+  description: 'Church does not belong to the session, or role is not super_admin (PATCH only)',
+  type: ErrorResponseDto,
+})
 export class ChurchController {
   constructor(private readonly churchService: ChurchService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Create a church' })
-  @ApiCreatedResponse({ type: ChurchDto })
-  @ApiBadRequestResponse({
-    description: 'Validation failed (field errors in body)',
-    type: ErrorResponseDto,
-  })
-  create(@Body(new ZodValidationPipe(CreateChurchDto.schema)) body: CreateChurchDto) {
-    return this.churchService.create(body);
-  }
-
-  @Get(':id')
+  @Get(':churchId')
   @ApiOperation({ summary: 'Get a church by ID' })
   @ApiOkResponse({ type: ChurchDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
   @ApiBadRequestResponse({ description: 'Malformed UUID', type: ErrorResponseDto })
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.churchService.findById(id);
+  findOne(@Param('churchId', ParseUUIDPipe) churchId: string) {
+    return this.churchService.findById(churchId);
   }
 
-  @Patch(':id')
+  @Patch(':churchId')
+  @StaffRoles('super_admin')
+  @UseGuards(RolesGuard)
   @ApiOperation({ summary: 'Update a church' })
   @ApiOkResponse({ type: ChurchDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
@@ -46,9 +47,9 @@ export class ChurchController {
     type: ErrorResponseDto,
   })
   update(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('churchId', ParseUUIDPipe) churchId: string,
     @Body(new ZodValidationPipe(UpdateChurchDto.schema)) body: UpdateChurchDto,
   ) {
-    return this.churchService.update(id, body);
+    return this.churchService.update(churchId, body);
   }
 }
