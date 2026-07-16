@@ -63,6 +63,11 @@ jobs:
         - run: pnpm install --frozen-lockfile
         - run: pnpm --filter @koru/api db:generate
 
+        # @koru/shared resolves via its package.json exports to dist/, which is
+        # gitignored and so absent on a fresh clone. Builds the dependencies of
+        # @koru/api, not @koru/api itself (e2e compiles that from source).
+        - run: pnpm --filter @koru/api^... build
+
         - name: Write .env.test
           run: |
             cat > apps/api/.env.test <<'EOF'
