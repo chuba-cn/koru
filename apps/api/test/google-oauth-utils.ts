@@ -1,5 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { requireOriginList } from '../src/config/env';
 
 function fakeGoogleIdToken(claims: Record<string, unknown>): string {
   const header = { alg: 'RS256', typ: 'JWT' };
@@ -19,6 +20,14 @@ type FakeGoogleOptions = {
   errorCallbackURL?: string;
   brokenTokenExchange?: boolean;
 };
+
+/**
+ * Reuses the app's own parser rather than re-implementing it, so the test cannot
+ * drift into accepting an origin the app would reject.
+ */
+function webOrigin(): string {
+  return requireOriginList('WEB_ORIGIN')[0];
+}
 
 function extractState(authorizeUrl: string): string {
   const state = new URL(authorizeUrl).searchParams.get('state');
@@ -98,8 +107,8 @@ export async function signInWithFakeGoogle(
   profile: FakeGoogleProfile,
   opts: FakeGoogleOptions = {},
 ): Promise<{ location: string | undefined; cookie: string | undefined }> {
-  const callbackURL = opts.callbackURL ?? 'http://localhost:3000/dashboard';
-  const errorCallbackURL = opts.errorCallbackURL ?? 'http://localhost:3000/auth-error';
+  const callbackURL = opts.callbackURL ?? `${webOrigin()}/dashboard`;
+  const errorCallbackURL = opts.errorCallbackURL ?? `${webOrigin()}/auth-error`;
 
   const start = await request(app.getHttpServer())
     .post('/api/auth/sign-in/social')
@@ -117,9 +126,8 @@ export async function linkFakeGoogleAccount(
   profile: FakeGoogleProfile,
   opts: FakeGoogleOptions = {},
 ): Promise<{ location: string | undefined }> {
-  const callbackURL = opts.callbackURL ?? 'http://localhost:3000/account/connections';
-  const errorCallbackURL =
-    opts.errorCallbackURL ?? 'http://localhost:3000/account/connections/error';
+  const callbackURL = opts.callbackURL ?? `${webOrigin()}/account/connections`;
+  const errorCallbackURL = opts.errorCallbackURL ?? `${webOrigin()}/account/connections/error`;
 
   const start = await request(app.getHttpServer())
     .post('/api/auth/link-social')

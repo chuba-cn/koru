@@ -74,6 +74,7 @@ jobs:
             DATABASE_URL="postgresql://koru:koru@localhost:5432/koru_test?schema=public"
             BETTER_AUTH_SECRET="ci-only-value-not-a-real-secret-0000000000="
             BETTER_AUTH_URL="http://localhost:3001"
+            WEB_ORIGIN="http://localhost:4000"
             GOOGLE_CLIENT_ID="test-google-client-id"
             GOOGLE_CLIENT_SECRET="test-google-client-secret"
             EOF
