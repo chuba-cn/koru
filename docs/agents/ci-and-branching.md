@@ -1,0 +1,66 @@
+# CI and branching
+
+How work gets from a ticket onto `main` in this repo. Applies to humans and agents alike.
+
+## The loop
+
+1. **Pick a ticket.** Every change starts as a GitHub issue (see [issue-tracker.md](./issue-tracker.md)).
+2. **Branch.** Never commit to `main` — it is protected and will reject a direct push.
+   ```
+   <type>/<issue-number>-<short-slug>
+   ```
+   `feat/23-github-actions-ci`, `fix/21-onboarding-p2002-409`, `chore/22-dead-church-code`, `docs/25-adr-squash-merge`
+
+   `<type>` matches the conventional-commit prefix used on `main`, so the branch name previews the eventual commit subject. The issue number ties branch to ticket without a lookup.
+3. **Do the work.** Commit as messily as you like — intermediate commits are squashed away and never reach `main`.
+4. **Open a PR** with `Closes #<n>` in the body, so the merge closes the ticket automatically.
+5. **CI must be green.** `verify` and `e2e` are required; `main` will not accept the PR otherwise.
+6. **Squash-merge.** The branch is deleted automatically.
+
+## What CI runs
+
+One workflow, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), on every PR and every push to `main`. Two jobs, in parallel:
+
+| Job | Runs | Needs a DB |
+|---|---|---|
+| `verify` | `prisma generate` → `pnpm lint` → `pnpm check-types` → `pnpm build` | no |
+| `e2e` | `prisma generate` → write `.env.test` → `pnpm --filter @koru/api test:e2e` | yes — ephemeral `postgres:17` service container |
+
+You can run all of it locally; CI runs nothing you can't. Do that before pushing — a red local run is far easier to read than a red CI run.
+
+```bash
+docker compose up -d
+pnpm --filter @koru/api db:generate
+pnpm lint && pnpm check-types && pnpm build
+pnpm --filter @koru/api test:e2e
+```
+
+## Decisions, and why — don't "fix" these
+
+**Two jobs, not one per task.** `pnpm lint` takes ~1.5s; a dedicated job pays ~40s of checkout + setup + install first. A lint job is a 25x overhead tax on a 1.5-second command. `verify` and `e2e` split only because they have different resource shapes (one needs Postgres), which buys parallel wall-clock, a legible signal, and DB isolation.
+
+**Squash-merge only.** `main` is a **one-commit-per-ticket ledger**, and agents are instructed to read `git log` to learn what has already been tried and decided. Rebase-merge would spray "wip" / "fix review finding" commits onto `main` and turn that ledger into landfill. The cost is real and accepted: `git bisect` lands on a whole ticket, not a single hunk — which is the right granularity for ticket-sized slices anyway.
+
+**CI is the merge gate; there is no required reviewer.** GitHub won't let you approve your own PR, so requiring an approval would deadlock `main` for a solo developer. Code review happens locally via the `code-reviewer` subagent, enforced by [`.claude/hooks/review-gate.sh`](../../.claude/hooks/review-gate.sh). Raise `required_approving_review_count` the day a second human joins.
+
+**`strict_required_status_checks_policy` is on.** A PR must be up to date with `main` before merging. This is what makes squash safe — it stops a PR merging green against a stale `main`. Nearly free for one developer; it's what catches semantic conflicts once two agents work in parallel.
+
+**Test credentials live in `ci.yml` in plain sight, not in repo secrets.** A repo secret is for a credential that protects a *real asset*. The CI `BETTER_AUTH_SECRET` signs sessions in a container destroyed minutes later; the Google values are placeholders the suite never sends to Google. Using secrets would make CI unreproducible for contributors, mask the very connection strings you need to debug a CI-only failure, and silently break for fork PRs. Real Paystack keys or a staging `DATABASE_URL` **are** secrets.
+
+**Postgres comes from `services:`, never a shared database.** Issue #22: the e2e suite cannot tolerate two concurrent runs, because `truncateAll` does `TRUNCATE ... CASCADE` on every table and overlapping runs delete each other's in-flight data. A `services:` container gives every job its own database, so two CI runs *cannot* collide — isolation by construction, not by discipline. A shared CI database would import #22 into CI.
+
+**`prisma generate` runs explicitly.** The client is gitignored and `turbo.json` has no `db:generate` task, so Turbo's graph can't see that `build`/`check-types` depend on generated code. On a fresh clone, typecheck fails before typechecking anything.
+
+**`.env.test` is written by CI, not passed as job `env:`.** `test/global-setup.ts` loads it with `override: true`, so the file always wins over job env. The file is gitignored and absent in CI, and dotenv swallows the missing-file error — so job env *appears* to work, but only because the file is absent. Correctness depending on a file's absence is a landmine.
+
+## Two traps that silently break the merge gate
+
+**Don't add a matrix strategy** without updating the required checks. A matrix renders check names as `verify (22)`; a required context of `verify` would then never match, leaving every PR permanently pending.
+
+**Don't add `paths-ignore`.** A workflow skipped by a path filter reports *no status at all* — not success, not "skipped". A required check that never reports blocks the merge forever, making a docs-only PR unmergeable. If path filtering ever becomes necessary, use a `changes` job that always runs and conditionally no-ops while still reporting success.
+
+## When the frontend lands
+
+`apps/web` needs **no workflow change**. `pnpm lint` is `biome check .` from the root and already covers paths that don't exist yet; `build` and `check-types` are `turbo run`, and `pnpm-workspace.yaml` globs `apps/*`, so Turbo picks up a new workspace automatically. `turbo.json` already declares `.output/**` as a build output — the TanStack Start/Nitro directory.
+
+The only additive change is a **third job** when web gets Playwright e2e, because that's another distinct resource shape (browser deps). Add it alongside; don't fold it into `e2e`.

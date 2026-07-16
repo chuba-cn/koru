@@ -3,6 +3,12 @@
 Church pledge / project-giving SaaS for Nigeria. pnpm + Turborepo monorepo
 (`apps/*`, `packages/*`).
 
+## How work ships
+
+**Never commit to `main`** — it is protected and will reject a direct push. Every ticket gets a
+branch (`<type>/<issue>-<slug>`), a PR with `Closes #<n>`, green CI, and a squash-merge. See
+`docs/agents/ci-and-branching.md` for the loop, what CI runs, and the decisions behind it.
+
 ## Agent skills
 
 ### Issue tracker
@@ -16,3 +22,7 @@ The five canonical triage roles, each label string equal to its name (`needs-tri
 ### Domain docs
 
 Multi-context: a root `CONTEXT-MAP.md` points to a per-package `CONTEXT.md`. See `docs/agents/domain.md`.
+
+### CI and branching
+
+Branch-per-ticket, PR, green CI, squash-merge. See `docs/agents/ci-and-branching.md`.

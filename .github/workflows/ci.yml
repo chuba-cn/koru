@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+      name: verify
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v6
+
+        - uses: pnpm/action-setup@v6
+          with:
+            cache: true
+
+        - uses: actions/setup-node@v6
+          with:
+            node-version: 22
+
+        - run: pnpm install --frozen-lockfile
+
+        - run: pnpm --filter @koru/api db:generate
+
+        - run: pnpm lint
+        - run: pnpm check-types
+        - run: pnpm build
+
+  e2e:
+      name: e2e
+      runs-on: ubuntu-latest
+      services:
+        postgres:
+          image: postgres:17
+          env:
+            POSTGRES_USER: koru
+            POSTGRES_PASSWORD: koru
+            POSTGRES_DB: koru_test
+          ports:
+            - 5432:5432
+          options: >-
+            --health-cmd "pg_isready -U koru -d koru_test"
+            --health-interval 10s
+            --health-timeout 5s
+            --health-retries 5
+      steps:
+        - uses: actions/checkout@v6
+
+        - uses: pnpm/action-setup@v6
+          with:
+            cache: true
+
+        - uses: actions/setup-node@v6
+          with:
+            node-version: 22
+
+        - run: pnpm install --frozen-lockfile
+        - run: pnpm --filter @koru/api db:generate
+
+        # @koru/shared resolves via its package.json exports to dist/, which is
+        # gitignored and so absent on a fresh clone. Builds the dependencies of
+        # @koru/api, not @koru/api itself (e2e compiles that from source).
+        - run: pnpm --filter @koru/api^... build
+
+        - name: Write .env.test
+          run: |
+            cat > apps/api/.env.test <<'EOF'
+            DATABASE_URL="postgresql://koru:koru@localhost:5432/koru_test?schema=public"
+            BETTER_AUTH_SECRET="ci-only-value-not-a-real-secret-0000000000="
+            BETTER_AUTH_URL="http://localhost:3001"
+            GOOGLE_CLIENT_ID="test-google-client-id"
+            GOOGLE_CLIENT_SECRET="test-google-client-secret"
+            EOF
+
+        - run: pnpm --filter @koru/api test:e2e
