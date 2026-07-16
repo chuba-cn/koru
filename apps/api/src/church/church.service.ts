@@ -1,14 +1,15 @@
-import type { CreateChurchInput, UpdateChurchInput } from '@koru/shared';
+import type { UpdateChurchInput } from '@koru/shared';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+/**
+ * Churches are created only by OnboardingService, via signup -> bootstrap. There
+ * is deliberately no create method here: a second creation path would let a
+ * church exist without a founding super_admin.
+ */
 @Injectable()
 export class ChurchService {
   constructor(private readonly prisma: PrismaService) {}
-
-  create(input: CreateChurchInput) {
-    return this.prisma.church.create({ data: input });
-  }
 
   async findById(id: string) {
     const church = await this.prisma.church.findUnique({ where: { id } });

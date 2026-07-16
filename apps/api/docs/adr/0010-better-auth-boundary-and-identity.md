@@ -23,6 +23,17 @@ member who gives needs no special-case code. Tenant context is resolved from the
 user's `Staff.churchId` (the tenant guard); staff **roles/scopes stay KORU's**, layered over
 Better Auth's session by our own guards.
 
+**One login is staff at exactly one church.** `Staff.userId` is `@unique`, so the database has
+always enforced this, and `TenantGuard` relies on it (`findUnique({ where: { userId } })` resolves
+the tenant from the login alone, and could not resolve a second church even if the data existed).
+The Prisma relation formerly said `User.staff Staff[]`, advertising multi-church staff that could
+never exist — so the model was corrected to `Staff?` to state the real cardinality. This is a
+deliberate product answer, not an accident of an index: a person who serves two churches gets two
+logins. **Note this does not constrain dual identity**, which is a different axis — the same login
+may still be pointed at by both a `Staff` row and a `Member` row, which is why `User.members`
+stays a list. If multi-church staff is ever wanted, it is a real migration: drop the `@unique` and
+teach `TenantGuard` to resolve by `(userId, churchId)`.
+
 **The boundary produces two API doc surfaces, and that is intended.** Better Auth mounts and owns
 its own routes under `/api/auth/*`, so they never pass through our `@nestjs/swagger` decorators and
 cannot appear in the document `SwaggerModule.createDocument` builds. Each side therefore documents

@@ -46,6 +46,22 @@ function mergeCookies(...headers: Array<string | undefined>): string {
   return headers.filter(Boolean).join('; ');
 }
 
+/**
+ * Fakes only Google's token endpoint — the single call that leaves our process.
+ * Everything else (state, cookies, session creation, our guards) runs for real.
+ *
+ * Two constraints this depends on:
+ *
+ * 1. `globalThis.fetch` is process-global, so this requires serial execution. It
+ *    breaks the moment anyone adds `test.concurrent` or flips `fileParallelism`
+ *    in vitest.e2e.config.ts.
+ * 2. The fake id token is signed with the literal string "fake-signature" and
+ *    Better Auth accepts it, because the authorization-code flow deliberately
+ *    does not verify the signature — it trusts the TLS-authenticated token
+ *    endpoint. These helpers therefore prove callback plumbing, NOT token
+ *    authenticity. Do not extend them to cover a direct id-token sign-in flow:
+ *    they would happily green-light a forged token.
+ */
 async function runFakeGoogleCallback(
   app: INestApplication,
   state: string,
