@@ -14,6 +14,10 @@ How work gets from a ticket onto `main` in this repo. Applies to humans and agen
    `<type>` matches the conventional-commit prefix used on `main`, so the branch name previews the eventual commit subject. The issue number ties branch to ticket without a lookup.
 3. **Do the work.** Commit as messily as you like — intermediate commits are squashed away and never reach `main`.
 4. **Open a PR** with `Closes #<n>` in the body, so the merge closes the ticket automatically.
+   ```bash
+   gh pr create --base main --title "<type>: <what changed>" --body "Closes #<n>"
+   ```
+   **Not `gh pr create --fill`.** `--fill` takes the body from the commit message, so the PR gets no `Closes #<n>`: the merge won't close the ticket, and because `squash_merge_commit_message=PR_BODY` the squash commit loses the ticket link too — breaking the commit → PR → ticket → epic chain that makes `main` navigable. (This is not hypothetical; it's how #23 stayed open after merging.)
 5. **CI must be green.** `verify` and `e2e` are required; `main` will not accept the PR otherwise.
 6. **Squash-merge.** The branch is deleted automatically.
 

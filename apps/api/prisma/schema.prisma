@@ -279,7 +279,8 @@ model User {
   updatedAt     DateTime  @updatedAt
   sessions      Session[]
   accounts      Account[]
-  staff         Staff[]   @relation("StaffUser")
+  // One login is staff at one church; members are a separate axis. See ADR-0010.
+  staff         Staff?    @relation("StaffUser")
   members       Member[]  @relation("MemberUser")
 
   @@unique([email])

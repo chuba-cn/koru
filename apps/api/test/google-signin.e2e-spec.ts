@@ -33,7 +33,7 @@ describe('Google sign-in (e2e)', () => {
     await app.close();
   });
 
-  it('valid: sign-up-with-Google bootstraps a church, and a later Google login reuses the same staff', async () => {
+  it('valid: a Google signup can bootstrap a church, and a later Google login reuses that staff', async () => {
     const email = 'ada@example-church.test';
 
     const first = await signInWithFakeGoogle(app, { sub: 'google-ada-1', email, name: 'Ada Obi' });

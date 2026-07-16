@@ -24,6 +24,34 @@ describe('API documentation surface (e2e)', () => {
     expect(res.text).toContain('Scalar API Reference');
   });
 
+  it('does not publish internal-only field names, in either format', async () => {
+    // These live on Prisma models but must never reach a shared Zod schema,
+    // since every Zod schema becomes public documentation (ADR-0005).
+    const json = await request(app.getHttpServer()).get('/schema.json').expect(200);
+    const yaml = await request(app.getHttpServer()).get('/schema.yaml').expect(200);
+
+    for (const document of [JSON.stringify(json.body), yaml.text]) {
+      expect(document).not.toContain('paystackSubaccountCode');
+      expect(document).not.toContain('passwordHash');
+    }
+  });
+
+  it('does not leak secret values into the published document', async () => {
+    // Asserts the values, not the variable names. Matching on names would pass
+    // even if the real secret were interpolated into a description or example,
+    // which is the only way one could actually get in here.
+    const secrets = [process.env.BETTER_AUTH_SECRET, process.env.GOOGLE_CLIENT_SECRET];
+
+    const json = await request(app.getHttpServer()).get('/schema.json').expect(200);
+    const yaml = await request(app.getHttpServer()).get('/schema.yaml').expect(200);
+
+    for (const secret of secrets) {
+      expect(secret).toBeTruthy();
+      expect(JSON.stringify(json.body)).not.toContain(secret);
+      expect(yaml.text).not.toContain(secret);
+    }
+  });
+
   it('serves a downloadable JSON schema covering the domain routes', async () => {
     const res = await request(app.getHttpServer()).get('/schema.json').expect(200);
     expect(res.headers['content-type']).toContain('application/json');
