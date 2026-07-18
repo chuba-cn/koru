@@ -8,12 +8,13 @@ const INPUT = { churchName: 'Celebration Church', fullName: 'Ada Obi' };
 
 type CreateArgs = { data: { staff: { create: Record<string, unknown> } } };
 
+/** Echoes the nested write back, so tests can assert the church that comes out. */
 function fakePrisma(existingStaff: unknown = null) {
   return {
     staff: { findUnique: vi.fn(() => Promise.resolve(existingStaff)) },
     church: {
-      create: vi.fn((_args: CreateArgs) =>
-        Promise.resolve({ id: 'church-1', staff: [{ id: 'staff-1' }] }),
+      create: vi.fn(({ data }: CreateArgs) =>
+        Promise.resolve({ id: 'church-1', staff: [{ id: 'staff-1', ...data.staff.create }] }),
       ),
     },
   };
@@ -23,25 +24,16 @@ const duplicateKeyError = () =>
   new Prisma.PrismaClientKnownRequestError('duplicate', { code: 'P2002', clientVersion: '7' });
 
 describe('OnboardingService.bootstrapChurch', () => {
-  it('creates the church and its founding super_admin together', async () => {
-    const prisma = fakePrisma();
-    const service = new OnboardingService(prisma as never);
+  it('returns a church whose founding staff is a super_admin linked to the caller', async () => {
+    const service = new OnboardingService(fakePrisma() as never);
 
-    await service.bootstrapChurch(USER, INPUT);
+    const church = await service.bootstrapChurch(USER, INPUT);
 
-    expect(prisma.church.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          staff: {
-            create: expect.objectContaining({
-              email: USER.email,
-              role: 'super_admin',
-              userId: USER.id,
-            }),
-          },
-        }),
-      }),
-    );
+    expect(church.staff[0]).toMatchObject({
+      email: USER.email,
+      role: 'super_admin',
+      userId: USER.id,
+    });
   });
 
   it('rejects an account that already administers a church', async () => {
@@ -52,12 +44,8 @@ describe('OnboardingService.bootstrapChurch', () => {
     expect(prisma.church.create).not.toHaveBeenCalled();
   });
 
-  /**
-   * Two concurrent requests both pass the findUnique check, so the second one
-   * loses on the Staff.userId unique index. That is the constraint doing its
-   * job, and it must read as a conflict rather than a server fault.
-   */
-  it('maps the unique-constraint loss of a concurrent bootstrap to a conflict', async () => {
+  /** Losing the Staff.userId index is the constraint working, not a server fault. */
+  it('maps a lost race on the unique index to a conflict, never a 500', async () => {
     const prisma = fakePrisma();
     prisma.church.create.mockRejectedValue(duplicateKeyError());
     const service = new OnboardingService(prisma as never);

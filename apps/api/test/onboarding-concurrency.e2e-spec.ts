@@ -27,12 +27,16 @@ describe('Onboarding concurrency (e2e)', () => {
   });
 
   /**
-   * Proves the observable contract, not the P2002 branch: the window between the
-   * pre-check and the insert is too narrow to hit reliably over HTTP, so the
-   * loser here is usually rejected by the pre-check. The unique-constraint path
-   * is covered in onboarding.service.spec.ts, which can reach it directly.
+   * Do not read this as the regression test for the P2002 mapping — it cannot
+   * reach that branch reliably, because the window between the pre-check and the
+   * insert is too narrow over HTTP, so the loser is usually caught by the
+   * pre-check. Removing the catch leaves this test green. The branch is covered
+   * in onboarding.service.spec.ts, which reaches it directly.
+   *
+   * What this does prove is that the nested write is atomic: a losing bootstrap
+   * leaves no orphan Church behind.
    */
-  it('two simultaneous bootstraps create one church and return 409, never 500', async () => {
+  it('concurrent bootstraps leave exactly one church and no orphan rows', async () => {
     const email = `founder-${Date.now()}@example.test`;
     const signup = await request(app.getHttpServer())
       .post('/api/auth/sign-up/email')
