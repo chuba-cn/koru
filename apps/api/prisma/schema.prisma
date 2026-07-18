@@ -160,6 +160,7 @@ model Staff {
 
   church           Church       @relation(fields: [churchId], references: [id], onDelete: Cascade)
   scopes           StaffScope[]
+  invites          StaffInvite[]
   campaignsCreated Campaign[]
   userId           String?      @unique
   user             User?        @relation("StaffUser", fields: [userId], references: [id], onDelete: SetNull)
@@ -174,6 +175,20 @@ model StaffScope {
   scopeRefId String
 
   staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+}
+
+model StaffInvite {
+  id  String  @id @default(ulid())
+  staffId String
+  tokenHash  String   @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime    @default(now())
+
+  staff   Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@index([staffId])
 }

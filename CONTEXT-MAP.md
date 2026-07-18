@@ -25,3 +25,9 @@ shared core language.
 
 - System-wide ADRs: [`docs/adr/`](./docs/adr/)
 - API-scoped ADRs: [`apps/api/docs/adr/`](./apps/api/docs/adr/)
+
+## Implementation
+
+The `CONTEXT.md` files above are **pure glossary** — what the words mean. For *how the code
+actually works* (request lifecycle, guard chain, module map, patterns), see
+[`docs/architecture.md`](./docs/architecture.md).

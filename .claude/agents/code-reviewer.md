@@ -139,6 +139,29 @@ it is how a domain model rots.
 - Prisma schema changed? There must be a migration **and** the client must be regenerated
   (`pnpm --filter @koru/api db:generate`). Use the package.json scripts, not raw commands.
 
+### 10. The architecture doc must keep up with the code
+
+`docs/architecture.md` is the map of how the system works, and people trust it — so a stale one is
+worse than none.
+
+Flag as **MAJOR** when the diff does any of the following without updating it in the same PR:
+
+- adds, removes or renames a **module, controller, or route** (the module map and route table go stale)
+- changes the **guard chain**, the error contract, or another cross-cutting pattern
+- changes how **identity or tenancy** works
+- adds an external dependency or integration
+
+Also check the *quality* of the update, not merely its presence:
+
+- A feature flow needing more than roughly a screen of explanation belongs in a sibling under
+  `docs/architecture/`, linked from the Feature flows section — **not** inlined until the main doc
+  becomes unreadable.
+- **A document per module is a finding.** The value of `architecture.md` is that one place answers
+  "how does this work"; a reader should not have to assemble that from twenty files.
+- Anything with a sequence or a branch should be a mermaid diagram, not a paragraph.
+- Verify the doc matches the code it describes. A diagram showing a guard order the code does not
+  implement is worse than no diagram.
+
 ## Then review it as code, generally
 
 Beyond the KORU rules — the ordinary architect's pass, ranked by what actually matters:
