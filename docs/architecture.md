@@ -243,14 +243,16 @@ All of these are public and unauthenticated on purpose. They publish route and f
 
 ## Testing
 
-| Layer | Location | Needs a database |
-|---|---|---|
-| End-to-end | `apps/api/test/*.e2e-spec.ts` | Yes — real Postgres |
-| Unit | *planned, see [#29](https://github.com/koru-app/koru/issues/29)* | No |
+| Layer | Location | Needs a database | Run with |
+|---|---|---|---|
+| Unit | `src/**/*.spec.ts`, beside the code | No | `pnpm test:unit` |
+| End-to-end | `apps/api/test/*.e2e-spec.ts` | Yes — real Postgres | `pnpm --filter @koru/api test:e2e` |
 
-Today the suite is end-to-end only. It runs against a real database with `truncateAll` between tests, and authenticates through the `createAuthedChurch` helper.
+**A unit test must pass with Postgres stopped.** That is the line between the two layers; if a test needs a database, it is an end-to-end test.
 
-A unit test layer is specified but not yet built. When it lands, the rule will be that services, guards, pipes and everything in `packages/shared` get spec tests, and that controller specs assert **security wiring** rather than delegation to a mocked service.
+Services, guards, pipes, filters and everything in `packages/shared` need a spec. **Controller specs assert security wiring** — that the guards and `@StaffRoles` are actually attached — rather than delegation to a mocked service, which would pass even with no guards at all. The e2e suite proves delegation for real, running against a real database with `truncateAll` between tests and authenticating through the `createAuthedChurch` helper.
+
+The full standard, including the legitimate skips and the exemplars to copy, is in [`docs/agents/testing.md`](./agents/testing.md).
 
 ---
 

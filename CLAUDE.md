@@ -15,6 +15,14 @@ branch (`<type>/<issue>-<slug>`), a PR with `Closes #<n>`, green CI, and a squas
 to follow. **Read it before adding a module, controller or route, and update it in the same PR**
 — a stale architecture doc is worse than none, because people trust it.
 
+## How the code is tested
+
+Two layers. **Unit specs sit beside the code** (`src/**/*.spec.ts`) and must pass with Postgres
+stopped; **e2e** lives in `apps/api/test/`. Services, guards, pipes and everything in
+`packages/shared` need a spec. **Controller specs assert security wiring, never delegation to a
+mocked service** — a delegation test would pass even with no guards attached, which is a bug we
+have shipped. See `docs/agents/testing.md`.
+
 ## Agent skills
 
 ### Issue tracker
@@ -32,3 +40,7 @@ Multi-context: a root `CONTEXT-MAP.md` points to a per-package `CONTEXT.md`. See
 ### CI and branching
 
 Branch-per-ticket, PR, green CI, squash-merge. See `docs/agents/ci-and-branching.md`.
+
+### Testing
+
+Unit specs beside the code, e2e in `test/`. Controller specs assert wiring, not delegation. See `docs/agents/testing.md`.

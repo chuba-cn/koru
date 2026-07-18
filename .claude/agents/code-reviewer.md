@@ -185,8 +185,29 @@ Beyond the KORU rules — the ordinary architect's pass, ranked by what actually
 
 ## Tests
 
-e2e specs are Vitest + supertest against a real Postgres, `truncateAll` between tests, auth via the
+Two layers, and the standard is in `docs/agents/testing.md`. **Unit specs sit beside the code**
+(`src/**/*.spec.ts`, no database, run via `pnpm test:unit`). **e2e** lives in `apps/api/test/` and is
+Vitest + supertest against a real Postgres, `truncateAll` between tests, auth via the
 `createAuthedChurch` / `createAuthedChurchWithRegion` helpers.
+
+### Spec-test coverage is mandatory
+
+- **A new service, guard, pipe, filter or `packages/shared` function landing without a spec test is
+  a MAJOR finding**, unless it meets one of the documented skips in `docs/agents/testing.md`
+  (`PrismaService`, DTO wrappers, composition roots, pure pass-through). "It was hard to test" is
+  explicitly *not* a valid skip — flag it and say so.
+- **A controller spec that asserts delegation to a mocked service is itself a finding.** It is
+  coverage theatre: it skips the guard pipeline entirely, restates a one-line delegation, and
+  **would pass even if the controller had no guards attached** — the bug we shipped in #12. e2e
+  already proves delegation. Controller specs must assert security wiring via `Reflector` and the
+  `__guards__` metadata instead.
+- **Spec tests must assert behaviour, not calls.** `expect(prisma.x.create).toHaveBeenCalled()`
+  tests the implementation and survives a broken contract; asserting the thrown `ConflictException`
+  tests the contract. Flag call-assertions that stand in for a real assertion.
+- **A unit test that needs a database is misfiled.** It belongs in the e2e suite. The unit layer
+  must pass with Postgres stopped; that separation is what keeps it immune to the flakiness in #27.
+
+### Both layers
 
 - Does the test assert the behavior, or merely that nothing threw?
 - **Would it fail if the implementation were wrong?** For anything security-load-bearing — a tenant
@@ -203,6 +224,7 @@ You have Bash. Observe, don't imagine:
 
 ```
 pnpm lint
+pnpm test:unit
 pnpm --filter @koru/api build
 pnpm --filter @koru/api test:e2e
 ```
