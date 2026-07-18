@@ -146,7 +146,7 @@ sequenceDiagram
     User->>Ctrl: POST /invites/accept { token, password }
     Note over Ctrl: @AllowAnonymous()<br/>guards step aside
     Ctrl->>AS: accept(body)
-    AS->>Inv: consume(token)
+    AS->>Inv: peek, then claim(token)
     Inv->>DB: find by hash
     Inv->>Inv: isUsable? four checks
     alt any check fails
@@ -184,13 +184,34 @@ But this person has **no session and no staff link** — obtaining them is the e
 
 ---
 
-## The gatekeeper: one function, four questions
+## When the email is already taken
 
-Every rejection in this system comes from one small function, `isUsable` at [`staff-invite.service.ts:58-66`](../../apps/api/src/staff/staff-invite.service.ts). Four questions, in order, all must pass.
+Because signup is public and unverified, anyone can create a login holding a staff member's email before that person accepts. Left alone, that locks them out permanently, since `signUpEmail` refuses a duplicate.
 
 ```mermaid
 flowchart TD
-    S["consume(token)"] --> Q1{"Row with<br/>this hash?"}
+    A["accept() pre-flight"] --> B{"Does a login already<br/>hold this email?"}
+    B -->|no| C["claim the token,<br/>provision, link"]
+    B -->|yes| D["409 — ask an admin to reclaim"]
+
+    D --> E["super_admin calls<br/>POST /staff/{id}/invite/reclaim"]
+    E --> F{"Does that login own<br/>a Staff or Member?"}
+    F -->|yes| G["409 — refuse, it is a real person"]
+    F -->|no| H{"Created less than<br/>an hour ago?"}
+    H -->|yes| I["409 — may be a founder mid-signup"]
+    H -->|no| J["delete the Orphan Login,<br/>issue a fresh invite"]
+    J --> C
+```
+
+Three guards make deleting someone's login defensible: it must own nothing, it must be older than the grace period, and the caller must be an authenticated super_admin of that church. **Linking the existing login instead would be privilege escalation** — an unverified email proves nothing about who controls it, so that would hand the squatter a finance-role account whose password they chose. See [ADR-0012](../../apps/api/docs/adr/0012-unverified-email-reserves-nothing.md).
+
+## The gatekeeper: one function, four questions
+
+The same four rules decide every rejection, and they are encoded twice in [`staff-invite.service.ts`](../../apps/api/src/staff/staff-invite.service.ts): once in `isUsable`, which the read-only `peek` uses, and once in the `where` clause of `claim`'s conditional `UPDATE`. Those two must stay in step.
+
+```mermaid
+flowchart TD
+    S["claim(token)"] --> Q1{"Row with<br/>this hash?"}
     Q1 -->|no| R["❌ 400<br/><i>This invite is no longer valid</i>"]
     Q1 -->|yes| Q2{"acceptedAt<br/>still empty?"}
     Q2 -->|no| R
@@ -222,7 +243,7 @@ flowchart LR
 
 This is what makes the token single-use, and it matters because invites travel over WhatsApp, and WhatsApp messages get forwarded. Once the real person accepts, that message is worthless to anyone else.
 
-There is a **second, independent** guard at [`accept-invite.service.ts:18`](../../apps/api/src/staff/accept-invite.service.ts), which checks whether the staff member already has a login. Both would have to fail before anything bad happened — deliberate belt and braces on the most sensitive path in the feature.
+Single-use is enforced by the claim itself: one conditional `UPDATE` that sets `acceptedAt` only while it is still null. Two concurrent accepts cannot both win, because the loser blocks on the row lock and then matches nothing. A separate check that the staff member has no login yet runs before the claim, so a burnt token only ever means a genuine fault.
 
 ### Re-issuing
 

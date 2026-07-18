@@ -43,7 +43,7 @@ export class StaffInviteService {
     });
   }
 
-  async consume(rawToken: string, now = new Date()) {
+  async peek(rawToken: string, now = new Date()) {
     const invite = await this.prisma.staffInvite.findUnique({
       where: { tokenHash: this.hash(rawToken) },
       include: { staff: true },
@@ -55,17 +55,39 @@ export class StaffInviteService {
     return invite;
   }
 
+  /**
+   * A single conditional UPDATE, so two concurrent callers cannot both win.
+   * Under READ COMMITTED the loser blocks on the row lock, re-evaluates its
+   * WHERE once the winner commits, and matches nothing.
+   *
+   * Validate everything cheap before calling this: a claim burns the token
+   * regardless of what fails afterwards.
+   */
+  async claim(rawToken: string, now = new Date()) {
+    const tokenHash = this.hash(rawToken);
+
+    const { count } = await this.prisma.staffInvite.updateMany({
+      where: { tokenHash, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
+      data: { acceptedAt: now },
+    });
+
+    if (count === 0) throw new BadRequestException('This invite is no longer valid');
+
+    return this.prisma.staffInvite.findUniqueOrThrow({
+      where: { tokenHash },
+      include: { staff: true },
+    });
+  }
+
+  /** Undoes a claim when provisioning failed for a reason the caller can retry. */
+  async release(inviteId: string) {
+    await this.prisma.staffInvite.update({ where: { id: inviteId }, data: { acceptedAt: null } });
+  }
+
   private isUsable<T extends StaffInvite>(invite: T | null, now: Date): invite is T {
     if (!invite) return false;
     if (invite.acceptedAt) return false;
     if (invite.revokedAt) return false;
     return invite.expiresAt > now;
-  }
-
-  async markAccepted(inviteId: string, now = new Date()) {
-    await this.prisma.staffInvite.update({
-      where: { id: inviteId },
-      data: { acceptedAt: now },
-    });
   }
 }

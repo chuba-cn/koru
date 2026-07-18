@@ -56,3 +56,15 @@ _Avoid_: Permission, Role (a Role is *what* they may do; a Scope is *where*)
 **Import Batch**:
 A single spreadsheet upload of members/pledges/payments, previewed before it is committed.
 _Avoid_: Upload, Job
+
+### Identity
+
+**Orphan Login**:
+A Better Auth `user` that no `Staff` and no `Member` points at. It holds an email address but owns
+no KORU data, so it can be reclaimed by a super_admin (ADR-0012).
+_Avoid_: Ghost account, Unclaimed user
+
+**Reclaim**:
+A super_admin deleting an Orphan Login that holds one of their staff members' email addresses, so
+that person can be onboarded. Deliberately not automatic.
+_Avoid_: Release, Free, Take over
