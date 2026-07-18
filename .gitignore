@@ -36,3 +36,6 @@ apps/api/api-schema.json
 
 # Local code-review gate state, not shared
 .claude/.review-marker
+
+# Test coverage output
+coverage/

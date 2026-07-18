@@ -27,15 +27,17 @@ One workflow, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), on e
 
 | Job | Runs | Needs a DB |
 |---|---|---|
-| `verify` | `prisma generate` → `pnpm lint` → `pnpm check-types` → `pnpm build` | no |
+| `verify` | `prisma generate` → `pnpm lint` → `pnpm check-types` → `pnpm test:unit` → `pnpm build` | no |
 | `e2e` | `prisma generate` → write `.env.test` → `pnpm --filter @koru/api test:e2e` | yes — ephemeral `postgres:17` service container |
+
+The unit suite sits in `verify` precisely because it needs no database. That is what keeps the fast job fast, and it is why a unit test that reaches for Postgres is misfiled — see [`testing.md`](./testing.md).
 
 You can run all of it locally; CI runs nothing you can't. Do that before pushing — a red local run is far easier to read than a red CI run.
 
 ```bash
 docker compose up -d
 pnpm --filter @koru/api db:generate
-pnpm lint && pnpm check-types && pnpm build
+pnpm lint && pnpm check-types && pnpm test:unit && pnpm build
 pnpm --filter @koru/api test:e2e
 ```
 
