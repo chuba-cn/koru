@@ -8,11 +8,23 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { AuthUsersService } from '../auth/auth-users.service';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StaffInviteService } from './staff-invite.service';
+
+/**
+ * Protects someone who has just signed up and is partway through founding their
+ * own church from having that login deleted underneath them.
+ *
+ * It does not stop a determined squatter, who can simply re-register and wait,
+ * and it gives them a cheap way to re-block the address for an hour. It is a
+ * guard against destroying a bystander, not against the attack. See ADR-0012.
+ */
+export const RECLAIM_GRACE_MS = 1000 * 60 * 60;
 
 type StaffRow = { userId: string | null };
 
@@ -30,9 +42,12 @@ const staffQueryShape = {
 
 @Injectable()
 export class StaffService {
+  private readonly logger = new Logger(StaffService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly invites: StaffInviteService,
+    private readonly authUsers: AuthUsersService,
   ) {}
 
   private async assertChurchExists(churchId: string) {
@@ -170,5 +185,65 @@ export class StaffService {
   async revokeInvite(churchId: string, id: string) {
     await this.findById(churchId, id);
     await this.invites.revokeAllFor(id);
+  }
+
+  /**
+   * Frees a staff email whose login is held by an account that owns nothing —
+   * either a stranger who signed up with it first, or a half-finished accept.
+   * Deletes that login and issues a fresh invite.
+   *
+   * Requires an authenticated super_admin of this church, because an unverified
+   * email proves nothing about who controls it and only a human inside the
+   * tenant can break the tie. See ADR-0012.
+   */
+  async reclaimLogin(churchId: string, id: string, now = new Date()) {
+    const staff = await this.findById(churchId, id);
+
+    if (staff.status === 'active') {
+      throw new ConflictException('This staff member has already accepted their invite');
+    }
+
+    const user = await this.authUsers.findByEmail(staff.email);
+    if (!user) {
+      throw new NotFoundException(`No login is holding "${staff.email}"`);
+    }
+
+    if (now.getTime() - user.createdAt.getTime() < RECLAIM_GRACE_MS) {
+      throw new ConflictException(
+        'That login was created very recently and may belong to someone mid-signup. Try again later.',
+      );
+    }
+
+    await this.assertOwnsNothing(user.id);
+    await this.authUsers.delete(user.id);
+
+    /**
+     * The holder could have founded a church between the check and the delete,
+     * which would leave that church with a super_admin whose login no longer
+     * exists. Cheap to detect, and loud is better than silent.
+     */
+    await this.assertOwnsNothing(user.id, true);
+
+    return this.invites.issue(id);
+  }
+
+  private async assertOwnsNothing(userId: string, afterDelete = false) {
+    const [staff, member] = await Promise.all([
+      this.prisma.staff.findFirst({ where: { userId }, select: { id: true } }),
+      this.prisma.member.findFirst({ where: { userId }, select: { id: true } }),
+    ]);
+
+    if (!staff && !member) return;
+
+    if (afterDelete) {
+      this.logger.error(
+        `Login ${userId} acquired ${staff ? 'a staff record' : 'a member record'} during reclaim and was deleted anyway`,
+      );
+      return;
+    }
+
+    throw new ConflictException(
+      'That login belongs to an existing person and will not be deleted. Use a different email address.',
+    );
   }
 }

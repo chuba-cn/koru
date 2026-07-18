@@ -188,6 +188,10 @@ model StaffInvite {
   revokedAt   DateTime?
   createdAt   DateTime    @default(now())
 
+  // Set when accept() provisioned a login. An invite with acceptedAt set but
+  // this still null means the flow died mid-way; see ADR-0012.
+  provisionedUserId String?
+
   staff   Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@index([staffId])

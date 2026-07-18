@@ -69,9 +69,13 @@ export const StaffWithInviteSchema = StaffSchema.extend({
   invite: StaffInviteSchema,
 });
 
+/** Bounds mirror Better Auth's minPasswordLength and its 128-char default max. */
 export const AcceptInviteSchema = z.object({
   token: z.string().min(1),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(128, 'Password must be at most 128 characters'),
 });
 
 export type StaffInvite = z.infer<typeof StaffInviteSchema>;

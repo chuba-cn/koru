@@ -29,7 +29,14 @@ import { StaffRoles } from '../auth/staff-roles.decorator';
 import { TenantGuard } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { CreateStaffDto, ReplaceScopesDto, StaffDto, UpdateStaffDto } from './staff.dto';
+import {
+  CreateStaffDto,
+  ReplaceScopesDto,
+  StaffDto,
+  StaffInviteDto,
+  StaffWithInviteDto,
+  UpdateStaffDto,
+} from './staff.dto';
 import { StaffService } from './staff.service';
 
 @ApiTags('staff')
@@ -47,7 +54,7 @@ export class StaffController {
   @Post()
   @ApiOperation({ summary: 'Register a staff member' })
   @ApiCreatedResponse({
-    type: StaffDto,
+    type: StaffWithInviteDto,
     description: 'Staff created, with a one-time invite token',
   })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
@@ -105,13 +112,36 @@ export class StaffController {
 
   @Post(':id/invite')
   @ApiOperation({ summary: 'Re-issue an invite, invalidating any previous one' })
-  @ApiCreatedResponse({ description: 'A new invite; the token is shown only once' })
+  @ApiCreatedResponse({
+    type: StaffInviteDto,
+    description: 'A new invite; the token is shown only once',
+  })
   @ApiConflictResponse({ description: 'Staff member has already accepted', type: ErrorResponseDto })
   reissueInvite(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.staffService.reissueInvite(churchId, id);
+  }
+
+  @Post(':id/invite/reclaim')
+  @ApiOperation({
+    summary: 'Delete a login squatting on this staff email, then issue a fresh invite',
+  })
+  @ApiCreatedResponse({
+    type: StaffInviteDto,
+    description: 'Login reclaimed; a new invite token is returned once',
+  })
+  @ApiNotFoundResponse({ description: 'Staff not found, or no login holds that email' })
+  @ApiConflictResponse({
+    description: 'Already accepted, the login owns data, or it is inside the grace period',
+    type: ErrorResponseDto,
+  })
+  reclaimLogin(
+    @Param('churchId', ParseUUIDPipe) churchId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.staffService.reclaimLogin(churchId, id);
   }
 
   @Delete(':id/invite')
