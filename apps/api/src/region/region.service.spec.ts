@@ -106,8 +106,6 @@ describe('RegionService', () => {
 
       await service.remove(CHURCH, REGION.id);
 
-      // remove() returns void, so asserting it resolves proves nothing. The
-      // observable effect IS the delete, so that is what the contract is.
       expect(prisma.region.delete).toHaveBeenCalledWith({ where: { id: REGION.id } });
     });
 
