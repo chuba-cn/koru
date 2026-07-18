@@ -49,16 +49,34 @@ export const StaffScopeSchema = z.object({
   scopeRefId: z.uuid(),
 });
 
+export const StaffInviteSchema = z.object({
+  token: z.string(),
+  expiresAt: z.iso.datetime(),
+});
+
 export const StaffSchema = z.object({
   id: z.uuid(),
   churchId: z.uuid(),
   fullName: z.string(),
   email: z.email(),
   role: StaffRoleSchema,
+  status: z.enum(['pending', 'active']),
   createdAt: z.iso.datetime(),
   scopes: z.array(StaffScopeSchema),
 });
 
+export const StaffWithInviteSchema = StaffSchema.extend({
+  invite: StaffInviteSchema,
+});
+
+export const AcceptInviteSchema = z.object({
+  token: z.string().min(1),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+});
+
+export type StaffInvite = z.infer<typeof StaffInviteSchema>;
+export type StaffWithInvite = z.infer<typeof StaffWithInviteSchema>;
+export type AcceptInviteInput = z.infer<typeof AcceptInviteSchema>;
 export type ScopeInput = z.infer<typeof ScopeInputSchema>;
 export type CreateStaffInput = z.infer<typeof CreateStaffSchema>;
 export type UpdateStaffInput = z.infer<typeof UpdateStaffSchema>;

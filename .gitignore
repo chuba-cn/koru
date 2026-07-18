@@ -33,3 +33,6 @@ koru-api.yaml
 koru-auth-api.json
 apps/api/api-schema.json
 
+
+# Local code-review gate state, not shared
+.claude/.review-marker

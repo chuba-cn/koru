@@ -9,6 +9,12 @@ Church pledge / project-giving SaaS for Nigeria. pnpm + Turborepo monorepo
 branch (`<type>/<issue>-<slug>`), a PR with `Closes #<n>`, green CI, and a squash-merge. See
 `docs/agents/ci-and-branching.md` for the loop, what CI runs, and the decisions behind it.
 
+## How the code works
+
+`docs/architecture.md` is the map: request lifecycle, guard chain, module layout, and the patterns
+to follow. **Read it before adding a module, controller or route, and update it in the same PR**
+— a stale architecture doc is worse than none, because people trust it.
+
 ## Agent skills
 
 ### Issue tracker

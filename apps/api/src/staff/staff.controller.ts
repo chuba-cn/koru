@@ -46,7 +46,10 @@ export class StaffController {
 
   @Post()
   @ApiOperation({ summary: 'Register a staff member' })
-  @ApiCreatedResponse({ type: StaffDto })
+  @ApiCreatedResponse({
+    type: StaffDto,
+    description: 'Staff created, with a one-time invite token',
+  })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
   @ApiConflictResponse({ description: 'Email already used in this church', type: ErrorResponseDto })
   @ApiBadRequestResponse({
@@ -98,6 +101,28 @@ export class StaffController {
     @Body(new ZodValidationPipe(ReplaceScopesDto.schema)) body: ReplaceScopesDto,
   ) {
     return this.staffService.replaceScopes(churchId, id, body);
+  }
+
+  @Post(':id/invite')
+  @ApiOperation({ summary: 'Re-issue an invite, invalidating any previous one' })
+  @ApiCreatedResponse({ description: 'A new invite; the token is shown only once' })
+  @ApiConflictResponse({ description: 'Staff member has already accepted', type: ErrorResponseDto })
+  reissueInvite(
+    @Param('churchId', ParseUUIDPipe) churchId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.staffService.reissueInvite(churchId, id);
+  }
+
+  @Delete(':id/invite')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke any outstanding invite for a staff member' })
+  @ApiNoContentResponse({ description: 'Invite revoked' })
+  revokeInvite(
+    @Param('churchId', ParseUUIDPipe) churchId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.staffService.revokeInvite(churchId, id);
   }
 
   @Delete(':id')
