@@ -27,5 +27,8 @@ export async function signInMemberByPhone(app: INestApplication, phone: string) 
   if (!rawCookies) throw new Error('Better Auth did not set a session cookie on verify');
   const cookie = Array.isArray(rawCookies) ? rawCookies.join('; ') : String(rawCookies);
 
-  return { cookie, userId: verify.body.user.id as string };
+  const userId = verify.body?.user?.id as string | undefined;
+  if (!userId) throw new Error('Verify response missing user.id');
+
+  return { cookie, userId };
 }
