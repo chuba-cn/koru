@@ -8,7 +8,7 @@ import {
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** userId is delibrately removed from every response */
+/** userId is deliberately removed from every response */
 const MEMBER_SELECT = {
   id: true,
   churchId: true,

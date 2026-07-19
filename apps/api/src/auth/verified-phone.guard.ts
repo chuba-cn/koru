@@ -17,7 +17,7 @@ export class VerifiedPhoneGuard implements CanActivate {
       throw new InternalServerErrorException('VerifiedPhoneGuard ran without a session');
 
     if (!session.user.phoneNumberVerified)
-      throw new ForbiddenException('A verified phonenumber is required to join a church');
+      throw new ForbiddenException('A verified phone number is required to join a church');
 
     return true;
   }

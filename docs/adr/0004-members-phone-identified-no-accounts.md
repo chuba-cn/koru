@@ -11,5 +11,5 @@ never creates or links a `Member` by itself — joining is a deliberate, per-chu
 same-phone `Member` in one church says nothing about a person's relationship to another. A phone
 number can be reassigned (Nigerian SIM recycling); a `Member` row already linked to a different
 login is refused with 409, never silently reassigned. Staff, by contrast, are Users with real logins
-from the start ([ADR-0009](../apps/api/docs/adr/0009-better-auth-over-workos-and-handrolled.md),
-[ADR-0010](../apps/api/docs/adr/0010-better-auth-boundary-and-identity.md)).
+from the start ([ADR-0009](../../apps/api/docs/adr/0009-better-auth-over-workos-and-handrolled.md),
+[ADR-0010](../../apps/api/docs/adr/0010-better-auth-boundary-and-identity.md)).
