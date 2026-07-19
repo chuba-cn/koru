@@ -130,7 +130,7 @@ model Branch {
 model Member {
   id           String    @id @default(uuid())
   churchId     String
-  homeBranchId String
+  homeBranchId String?
   fullName     String
   phone        String
   email        String?
@@ -139,7 +139,7 @@ model Member {
   createdAt    DateTime  @default(now())
 
   church     Church  @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  homeBranch Branch  @relation(fields: [homeBranchId], references: [id])
+  homeBranch Branch?  @relation(fields: [homeBranchId], references: [id], onDelete: SetNull)
   userId     String?
   user       User?   @relation("MemberUser", fields: [userId], references: [id], onDelete: SetNull)
 
@@ -158,12 +158,12 @@ model Staff {
   paymentsRecorded Payment[]
   createdAt        DateTime  @default(now())
 
-  church           Church       @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  church           Church        @relation(fields: [churchId], references: [id], onDelete: Cascade)
   scopes           StaffScope[]
   invites          StaffInvite[]
   campaignsCreated Campaign[]
-  userId           String?      @unique
-  user             User?        @relation("StaffUser", fields: [userId], references: [id], onDelete: SetNull)
+  userId           String?       @unique
+  user             User?         @relation("StaffUser", fields: [userId], references: [id], onDelete: SetNull)
 
   @@unique([churchId, email])
 }
@@ -180,19 +180,19 @@ model StaffScope {
 }
 
 model StaffInvite {
-  id  String  @id @default(ulid())
-  staffId String
-  tokenHash  String   @unique
-  expiresAt   DateTime
-  acceptedAt  DateTime?
-  revokedAt   DateTime?
-  createdAt   DateTime    @default(now())
+  id         String    @id @default(ulid())
+  staffId    String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
 
   // Set when accept() provisioned a login. An invite with acceptedAt set but
   // this still null means the flow died mid-way; see ADR-0012.
   provisionedUserId String?
 
-  staff   Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@index([staffId])
 }
@@ -289,18 +289,20 @@ model Payment {
 }
 
 model User {
-  id            String    @id
-  name          String
-  email         String
-  emailVerified Boolean   @default(false)
-  image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  sessions      Session[]
-  accounts      Account[]
+  id                  String    @id
+  name                String
+  email               String
+  emailVerified       Boolean   @default(false)
+  image               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  sessions            Session[]
+  accounts            Account[]
+  phoneNumber         String?   @unique
+  phoneNumberVerified Boolean   @default(false)
   // One login is staff at one church; members are a separate axis. See ADR-0010.
-  staff         Staff?    @relation("StaffUser")
-  members       Member[]  @relation("MemberUser")
+  staff               Staff?    @relation("StaffUser")
+  members             Member[]  @relation("MemberUser")
 
   @@unique([email])
   @@map("user")

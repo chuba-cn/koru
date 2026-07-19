@@ -5,6 +5,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createAuthedChurch } from './auth-utils';
 import { truncateAll } from './db-utils';
+import { signInMemberByPhone } from './member-auth-utils';
 
 describe('Guards (e2e)', () => {
   let app: INestApplication;
@@ -69,6 +70,22 @@ describe('Guards (e2e)', () => {
     await request(app.getHttpServer())
       .get(`/churches/${alice.churchId}/staff`)
       .set('Cookie', alice.cookie)
+      .expect(403);
+  });
+
+  it('403s a member session reaching a staff-only route', async () => {
+    const church = await createAuthedChurch(app);
+    const phone = '+2348099999999';
+    const { cookie } = await signInMemberByPhone(app, phone);
+    await request(app.getHttpServer())
+      .post(`/join/${church.churchId}`)
+      .set('Cookie', cookie)
+      .send({ fullName: 'Grace Member' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/churches/${church.churchId}/staff`)
+      .set('Cookie', cookie)
       .expect(403);
   });
 });
