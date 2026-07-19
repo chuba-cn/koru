@@ -12,6 +12,7 @@ export * from './api.js';
 export * from './branch.js';
 export * from './church.js';
 export * from './mask.js';
+export * from './member.js';
 export * from './onboarding.js';
 export * from './region.js';
 export * from './schemas.js';

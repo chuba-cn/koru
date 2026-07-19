@@ -6,6 +6,7 @@ import { BranchModule } from './branch/branch.module';
 import { ChurchModule } from './church/church.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { HealthModule } from './health/health.module';
+import { MemberModule } from './member/member.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RegionModule } from './region/region.module';
@@ -20,6 +21,7 @@ import { StaffModule } from './staff/staff.module';
     RegionModule,
     BranchModule,
     StaffModule,
+    MemberModule,
     SettlementAccountModule,
     OnboardingModule,
     AuthModule.forRoot({ auth }),

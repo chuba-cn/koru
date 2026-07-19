@@ -123,6 +123,11 @@ graph LR
         branch["branch"]
     end
 
+    subgraph memberzone["Session only, or VerifiedPhoneGuard"]
+        member["member (/me)"]
+        join["member (/join)"]
+    end
+
     subgraph admin["TenantGuard + super_admin"]
         staff["staff"]
         settlement["settlement-account"]
@@ -147,6 +152,8 @@ graph LR
 | `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
 | `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin |
+| `member` | `GET /me` | Session only — every church this login belongs to |
+| `member` (join) | `GET /join/:churchId/branches`, `POST /join/:churchId` (201 create / 200 update) | Session; `POST` also needs a verified phone |
 
 Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar).
 
@@ -219,6 +226,7 @@ Three consequences worth knowing:
 
 - **One login is staff at exactly one church.** `Staff.userId` is unique, and `TenantGuard` relies on it. Someone serving two churches needs two logins.
 - **Dual identity works.** The same login can be pointed at by both a `Staff` row and a `Member` row, because `Member.userId` is separate and not unique. One person, two roles, one login.
+- **A verified phone earns the right to join, not membership itself.** `POST /join/:churchId` creates or links a `Member` explicitly, per church. Verifying an OTP alone never touches the `Member` table — see [ADR-0004](./adr/0004-members-phone-identified-no-accounts.md).
 - **We deliberately do not use Better Auth's organization plugin.** Our `Church → Region → Branch` plus `StaffScope` model is richer and already built. Recorded in [ADR-0010](../apps/api/docs/adr/0010-better-auth-boundary-and-identity.md).
 
 A staff member with `userId` still empty is **pending**: they exist in the church, and they cannot authenticate. That is enforced structurally rather than by a check, because `TenantGuard` resolves the tenant *through* that link, and an empty link resolves to nothing.
