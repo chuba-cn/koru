@@ -23,6 +23,8 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { RolesGuard } from '../auth/roles.guard';
+import { StaffRoles } from '../auth/staff-roles.decorator';
 import { TenantGuard } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -34,13 +36,15 @@ import { RegionService } from './region.service';
 @UseGuards(TenantGuard)
 @ApiUnauthorizedResponse({ description: 'No active session', type: ErrorResponseDto })
 @ApiForbiddenResponse({
-  description: 'Church does not belong to the session',
+  description: 'Church does not belong to the session, or role cannot manage regions',
   type: ErrorResponseDto,
 })
 export class RegionController {
   constructor(private readonly regionService: RegionService) {}
 
   @Post()
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @UseGuards(RolesGuard)
   @ApiOperation({ summary: 'Create a region in a church' })
   @ApiCreatedResponse({ type: RegionDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
@@ -68,6 +72,8 @@ export class RegionController {
   }
 
   @Patch(':id')
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @UseGuards(RolesGuard)
   @ApiOperation({ summary: 'Rename/update a region' })
   @ApiOkResponse({ type: RegionDto })
   @ApiNotFoundResponse({ description: 'Church or region not found', type: ErrorResponseDto })
@@ -88,6 +94,8 @@ export class RegionController {
   }
 
   @Delete(':id')
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @UseGuards(RolesGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete an empty region' })
   @ApiNoContentResponse({ description: 'Region deleted' })

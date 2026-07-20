@@ -73,6 +73,59 @@ describe('Guards (e2e)', () => {
       .expect(403);
   });
 
+  it('403s a recorder attempting to create a region or branch', async () => {
+    const alice = await createAuthedChurch(app);
+    await prisma.staff.update({ where: { id: alice.staffId }, data: { role: 'recorder' } });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'North', state: 'Lagos' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja' })
+      .expect(403);
+  });
+
+  it('leaves region and branch listing open to a recorder', async () => {
+    const alice = await createAuthedChurch(app);
+    await prisma.staff.update({ where: { id: alice.staffId }, data: { role: 'recorder' } });
+
+    await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .expect(200);
+  });
+
+  it.each([
+    'regional_admin',
+    'branch_admin',
+    'finance',
+  ] as const)('lets a %s create a region and a branch', async (role) => {
+    const alice = await createAuthedChurch(app);
+    await prisma.staff.update({ where: { id: alice.staffId }, data: { role } });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'North', state: 'Lagos' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja' })
+      .expect(201);
+  });
+
   it('403s a member session reaching a staff-only route', async () => {
     const church = await createAuthedChurch(app);
     const phone = '+2348099999999';
