@@ -92,11 +92,20 @@ describe('Member pledge history (e2e)', () => {
     expect(res.body[0]).not.toHaveProperty('member');
   });
 
-  it("returns a member's own payments", async () => {
+  it("returns a member's own payments, excluding anonymous giving with no member attached", async () => {
     const church = await createAuthedChurch(app);
     const ada = await signInMemberByPhone(app, '+2348012345702');
     const member = await joinChurch(app, church.churchId, ada.cookie, 'Ada Lovelace');
-    await seedGiving(prisma, church.churchId, member.id, 'Building Fund');
+    const { campaign } = await seedGiving(prisma, church.churchId, member.id, 'Building Fund');
+    await prisma.payment.create({
+      data: {
+        campaignId: campaign.id,
+        memberId: null,
+        amountKobo: 10_000_00n,
+        channel: 'cash',
+        status: 'success',
+      },
+    });
 
     const res = await request(app.getHttpServer())
       .get(`/me/churches/${church.churchId}/payments`)
@@ -148,6 +157,13 @@ describe('Member pledge history (e2e)', () => {
     const ada = await signInMemberByPhone(app, '+2348012345705');
     const member = await joinChurch(app, church.churchId, ada.cookie, 'Ada Lovelace');
     await seedGiving(prisma, church.churchId, member.id, 'Building Fund');
+
+    // Seed real giving in the other church too, so this proves isolation —
+    // not just that the other church happens to have no data at all.
+    const otherAda = await prisma.member.create({
+      data: { churchId: other.churchId, phone: '+2348099999996', fullName: 'Other Church Ada' },
+    });
+    await seedGiving(prisma, other.churchId, otherAda.id, 'Other Church Fund');
 
     const res = await request(app.getHttpServer())
       .get(`/me/churches/${other.churchId}/pledges`)

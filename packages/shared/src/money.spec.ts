@@ -83,4 +83,14 @@ describe('koboToBigint', () => {
   it('rejects a non-integer, which can never be valid kobo', () => {
     expect(() => koboToBigint(12.5)).toThrow(RangeError);
   });
+
+  /**
+   * Number.isInteger alone isn't enough: doubles above the safe range can
+   * still look integer-valued while no longer representing every integer
+   * exactly, so the check must be isSafeInteger.
+   */
+  it('rejects a number above the safe integer range, even though it looks like an integer', () => {
+    const unsafe = Number.MAX_SAFE_INTEGER + 2;
+    expect(() => koboToBigint(unsafe)).toThrow(RangeError);
+  });
 });

@@ -19,8 +19,8 @@ export const bigintToKobo = (value: bigint): Kobo => {
 };
 
 export const koboToBigint = (kobo: Kobo): bigint => {
-  if (!Number.isInteger(kobo)) {
-    throw new RangeError(`Kobo amount ${kobo} is not an integer`);
+  if (!Number.isSafeInteger(kobo)) {
+    throw new RangeError(`Kobo amount ${kobo} is not a safe integer`);
   }
   return BigInt(kobo);
 };
