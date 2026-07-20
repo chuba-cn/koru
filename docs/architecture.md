@@ -85,7 +85,7 @@ It also explains a behaviour that looks like a bug and is not. If you send a mal
 |---|---|---|
 | `AuthGuard` | from `@thallesp/nestjs-better-auth` | Applied globally. Every route is protected **unless** it is marked `@AllowAnonymous()`. Fail-closed by default. |
 | `TenantGuard` | [`src/auth/tenant.guard.ts`](../apps/api/src/auth/tenant.guard.ts) | Takes `session.user.id`, finds that person's `Staff` row, and checks its `churchId` matches the `:churchId` in the URL. Attaches the row to `req.staff`. |
-| `RolesGuard` | [`src/auth/roles.guard.ts`](../apps/api/src/auth/roles.guard.ts) | Reads the `@StaffRoles(...)` list off the controller and compares it to `req.staff.role`. |
+| `RolesGuard` | [`src/auth/roles.guard.ts`](../apps/api/src/auth/roles.guard.ts) | Reads the `@StaffRoles(...)` list off the controller and compares it to `req.staff.role`. A route with **no** `@StaffRoles(...)` decorator admits any tenant-matched staff role — a deliberate open-read default, not an oversight. See [ADR-0013](../apps/api/docs/adr/0013-staff-role-capability-matrix.md) for which of the five roles belong on which side of that line. |
 
 Two rules that have already caused bugs here, so they are worth committing to memory:
 
@@ -119,6 +119,9 @@ graph LR
 
     subgraph tenant["Needs TenantGuard"]
         church["church"]
+    end
+
+    subgraph tenantAdmin["TenantGuard + admin-tier for writes, tenant-only for GET"]
         region["region"]
         branch["branch"]
     end
@@ -147,8 +150,8 @@ graph LR
 | `health` | `GET /health`, `GET /health/db` | Public |
 | `onboarding` | `POST /onboarding/church` | Session only — you have no church yet |
 | `church` | `GET`/`PATCH /churches/:churchId` | Tenant; `PATCH` also needs super_admin |
-| `region` | CRUD under `/churches/:churchId/regions` | Tenant |
-| `branch` | CRUD under `/churches/:churchId/branches` | Tenant |
+| `region` | CRUD under `/churches/:churchId/regions` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
+| `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
 | `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
 | `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin |

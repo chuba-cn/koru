@@ -4,7 +4,13 @@ import { z } from 'zod';
  * Single source of the role values. The Prisma enum StaffRole (schema.prisma)
  * must list exactly these — if you change one, change both.
  */
-export const STAFF_ROLES = ['super_admin', 'regional_admin', 'branch_admin', 'finance'] as const;
+export const STAFF_ROLES = [
+  'super_admin',
+  'regional_admin',
+  'branch_admin',
+  'finance',
+  'recorder',
+] as const;
 
 export const StaffRoleSchema = z.enum(STAFF_ROLES);
 export type StaffRole = z.infer<typeof StaffRoleSchema>;

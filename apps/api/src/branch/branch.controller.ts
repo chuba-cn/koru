@@ -20,6 +20,8 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { RolesGuard } from '../auth/roles.guard';
+import { StaffRoles } from '../auth/staff-roles.decorator';
 import { TenantGuard } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -31,13 +33,15 @@ import { BranchService } from './branch.service';
 @UseGuards(TenantGuard)
 @ApiUnauthorizedResponse({ description: 'No active session', type: ErrorResponseDto })
 @ApiForbiddenResponse({
-  description: 'Church does not belong to the session',
+  description: 'Church does not belong to the session, or role cannot manage branches',
   type: ErrorResponseDto,
 })
 export class BranchController {
   constructor(private readonly branchService: BranchService) {}
 
   @Post()
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @UseGuards(RolesGuard)
   @ApiOperation({ summary: 'Create a branch (optionally inside a region)' })
   @ApiCreatedResponse({ type: BranchDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
@@ -69,6 +73,8 @@ export class BranchController {
   }
 
   @Patch(':id')
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @UseGuards(RolesGuard)
   @ApiOperation({
     summary: 'Update a branch; set regionId to move it, null to remove it from its region',
   })

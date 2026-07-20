@@ -18,6 +18,7 @@ enum StaffRole {
   regional_admin
   branch_admin
   finance
+  recorder
 }
 
 enum ScopeType {
