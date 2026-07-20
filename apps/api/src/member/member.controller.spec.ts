@@ -8,4 +8,11 @@ describe('MemberController wiring', () => {
     expect(guardsOf(MemberController)).toEqual([]);
     expect(guardsOf(MemberController.prototype.getProfile)).toEqual([]);
   });
+
+  it.each([
+    'myPledges',
+    'myPayments',
+  ] as const)('leaves %s session-only, so isolation comes from the query not a guard', (method) => {
+    expect(guardsOf(MemberController.prototype[method])).toEqual([]);
+  });
 });
