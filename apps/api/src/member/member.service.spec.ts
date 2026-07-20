@@ -15,6 +15,9 @@ function fakePrisma() {
     { id: string; churchId: string; phone: string; userId: string | null }
   >();
 
+  const pledgeRows: Array<{ userId: string; churchId: string; [key: string]: unknown }> = [];
+  const paymentRows: Array<{ userId: string; churchId: string; [key: string]: unknown }> = [];
+
   return {
     church: {
       findUnique: vi.fn(({ where }: { where: { id: string } }) =>
@@ -52,8 +55,28 @@ function fakePrisma() {
         return Promise.resolve(row);
       }),
     },
+    pledge: {
+      findMany: vi.fn(({ where }: { where: { member: { userId: string; churchId: string } } }) => {
+        const matches = pledgeRows.filter(
+          (r) => r.userId === where.member.userId && r.churchId === where.member.churchId,
+        );
+        return Promise.resolve(matches.map(({ userId: _u, churchId: _c, ...rest }) => rest));
+      }),
+    },
+    payment: {
+      findMany: vi.fn(({ where }: { where: { member: { userId: string; churchId: string } } }) => {
+        const matches = paymentRows.filter(
+          (r) => r.userId === where.member.userId && r.churchId === where.member.churchId,
+        );
+        return Promise.resolve(matches.map(({ userId: _u, churchId: _c, ...rest }) => rest));
+      }),
+    },
     seed: (row: { id: string; churchId: string; phone: string; userId: string | null }) =>
       rows.set(row.id, row),
+    seedPledge: (row: { userId: string; churchId: string; [key: string]: unknown }) =>
+      pledgeRows.push(row),
+    seedPayment: (row: { userId: string; churchId: string; [key: string]: unknown }) =>
+      paymentRows.push(row),
   };
 }
 
@@ -172,6 +195,101 @@ describe('MemberService', () => {
 
       expect(created).toBe(false);
       expect(prisma.member.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('myPledges', () => {
+    it('scopes the query to the caller and the church, which is the isolation mechanism', async () => {
+      const prisma = fakePrisma();
+      const service = new MemberService(prisma as never);
+
+      await service.myPledges(CALLER, CHURCH);
+
+      expect(prisma.pledge.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { member: { userId: CALLER, churchId: CHURCH } } }),
+      );
+    });
+
+    it('converts the BigInt pledgeAmountKobo to a plain number', async () => {
+      const prisma = fakePrisma();
+      prisma.seedPledge({
+        userId: CALLER,
+        churchId: CHURCH,
+        id: 'pledge-1',
+        campaignId: 'campaign-1',
+        pledgeAmountKobo: 50_000_00n,
+        cadence: 'monthly',
+        status: 'active',
+        source: 'self',
+        createdAt: new Date(),
+        campaign: { id: 'campaign-1', title: 'Building Fund' },
+      });
+      const service = new MemberService(prisma as never);
+
+      const [pledge] = await service.myPledges(CALLER, CHURCH);
+
+      expect(pledge?.pledgeAmountKobo).toBe(5_000_000);
+      expect(typeof pledge?.pledgeAmountKobo).toBe('number');
+    });
+
+    /**
+     * The guard bigintToKobo exists for: a corrupted amount must never reach a
+     * client silently. A too-large pledge fails the request rather than
+     * rounding.
+     */
+    it('propagates a RangeError rather than a corrupted amount, above the safe integer range', async () => {
+      const prisma = fakePrisma();
+      prisma.seedPledge({
+        userId: CALLER,
+        churchId: CHURCH,
+        id: 'pledge-1',
+        campaignId: 'campaign-1',
+        pledgeAmountKobo: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+        cadence: 'monthly',
+        status: 'active',
+        source: 'self',
+        createdAt: new Date(),
+        campaign: { id: 'campaign-1', title: 'Building Fund' },
+      });
+      const service = new MemberService(prisma as never);
+
+      await expect(service.myPledges(CALLER, CHURCH)).rejects.toThrow(RangeError);
+    });
+  });
+
+  describe('myPayments', () => {
+    it('scopes the query to the caller and the church, which is the isolation mechanism', async () => {
+      const prisma = fakePrisma();
+      const service = new MemberService(prisma as never);
+
+      await service.myPayments(CALLER, CHURCH);
+
+      expect(prisma.payment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { member: { userId: CALLER, churchId: CHURCH } } }),
+      );
+    });
+
+    it('converts the BigInt amountKobo to a plain number', async () => {
+      const prisma = fakePrisma();
+      prisma.seedPayment({
+        userId: CALLER,
+        churchId: CHURCH,
+        id: 'payment-1',
+        campaignId: 'campaign-1',
+        pledgeId: null,
+        amountKobo: 20_000_00n,
+        channel: 'paystack_transfer',
+        status: 'success',
+        paidAt: new Date(),
+        createdAt: new Date(),
+        campaign: { id: 'campaign-1', title: 'Building Fund' },
+      });
+      const service = new MemberService(prisma as never);
+
+      const [payment] = await service.myPayments(CALLER, CHURCH);
+
+      expect(payment?.amountKobo).toBe(2_000_000);
+      expect(typeof payment?.amountKobo).toBe('number');
     });
   });
 });

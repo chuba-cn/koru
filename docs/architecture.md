@@ -152,7 +152,7 @@ graph LR
 | `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
 | `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin |
-| `member` | `GET /me` | Session only — every church this login belongs to |
+| `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard |
 | `member` (join) | `GET /join/:churchId/branches`, `POST /join/:churchId` (201 create / 200 update) | Session; `POST` also needs a verified phone |
 
 Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar).
@@ -196,7 +196,7 @@ Success responses return the resource itself, with no wrapper. Every failure con
 
 ### Money is always integer Kobo
 
-Never a float, never an ambiguous "amount". This is [ADR-0003](./adr/0003-money-as-integer-kobo.md) and it is not negotiable.
+Never a float, never an ambiguous "amount". This is [ADR-0003](./adr/0003-money-as-integer-kobo.md) and it is not negotiable. Money columns are `BigInt` in Postgres (for headroom beyond a 32-bit `Int`), which `JSON.stringify` cannot serialize — every service returning a money field converts it with `bigintToKobo` from `packages/shared` before it reaches a controller. Never invent a second conversion path.
 
 ---
 

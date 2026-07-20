@@ -1,4 +1,4 @@
-import type { JoinMemberInput } from '@koru/shared';
+import { bigintToKobo, type JoinMemberInput } from '@koru/shared';
 import {
   BadRequestException,
   ConflictException,
@@ -18,6 +18,29 @@ const MEMBER_SELECT = {
   homeBranchId: true,
   createdAt: true,
 } satisfies Prisma.MemberSelect;
+
+const PLEDGE_HISTORY_SELECT = {
+  id: true,
+  campaignId: true,
+  pledgeAmountKobo: true,
+  cadence: true,
+  status: true,
+  source: true,
+  createdAt: true,
+  campaign: { select: { id: true, title: true } },
+} satisfies Prisma.PledgeSelect;
+
+const PAYMENT_HISTORY_SELECT = {
+  id: true,
+  campaignId: true,
+  pledgeId: true,
+  amountKobo: true,
+  channel: true,
+  status: true,
+  paidAt: true,
+  createdAt: true,
+  campaign: { select: { id: true, title: true } },
+} satisfies Prisma.PaymentSelect;
 
 @Injectable()
 export class MemberService {
@@ -115,5 +138,31 @@ export class MemberService {
       select: MEMBER_SELECT,
     });
     return { member, created: false };
+  }
+
+  async myPledges(userId: string, churchId: string) {
+    const pledges = await this.prisma.pledge.findMany({
+      where: { member: { userId, churchId } },
+      select: PLEDGE_HISTORY_SELECT,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return pledges.map((pledge) => ({
+      ...pledge,
+      pledgeAmountKobo: bigintToKobo(pledge.pledgeAmountKobo),
+    }));
+  }
+
+  async myPayments(userId: string, churchId: string) {
+    const payments = await this.prisma.payment.findMany({
+      where: { member: { userId, churchId } },
+      select: PAYMENT_HISTORY_SELECT,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return payments.map((payment) => ({
+      ...payment,
+      amountKobo: bigintToKobo(payment.amountKobo),
+    }));
   }
 }

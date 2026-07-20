@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { koboToNaira, nairaToKobo } from './index.js';
+import { bigintToKobo, koboToBigint, koboToNaira, nairaToKobo } from './index.js';
 
 describe('nairaToKobo', () => {
   it('converts whole naira', () => {
@@ -44,5 +44,43 @@ describe('koboToNaira', () => {
   it('converts back to a fractional naira', () => {
     expect(koboToNaira(1999)).toBe(19.99);
     expect(koboToNaira(1)).toBe(0.01);
+  });
+});
+
+describe('bigintToKobo', () => {
+  it('converts a normal amount to a number', () => {
+    expect(bigintToKobo(10_000_00n)).toBe(1_000_000);
+  });
+
+  it('handles zero', () => {
+    expect(bigintToKobo(0n)).toBe(0);
+  });
+
+  it('round-trips with koboToBigint', () => {
+    expect(koboToBigint(bigintToKobo(50_000_00n))).toBe(50_000_00n);
+  });
+
+  /**
+   * The guard the whole design rests on: Number() would silently return the
+   * nearest double here, so bigintToKobo must throw instead.
+   */
+  it('throws rather than silently rounding above the safe integer range', () => {
+    const tooBig = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+    expect(() => bigintToKobo(tooBig)).toThrow(RangeError);
+  });
+
+  it('throws on a value far below the negative safe integer range', () => {
+    const tooSmall = -BigInt(Number.MAX_SAFE_INTEGER) - 1n;
+    expect(() => bigintToKobo(tooSmall)).toThrow(RangeError);
+  });
+});
+
+describe('koboToBigint', () => {
+  it('converts a number to a BigInt', () => {
+    expect(koboToBigint(1_000_000)).toBe(10_000_00n);
+  });
+
+  it('rejects a non-integer, which can never be valid kobo', () => {
+    expect(() => koboToBigint(12.5)).toThrow(RangeError);
   });
 });
