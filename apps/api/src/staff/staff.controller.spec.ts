@@ -24,6 +24,14 @@ describe('StaffController wiring', () => {
   it('requires super_admin for the whole controller', () => {
     expect(reflector.get(STAFF_ROLES_KEY, StaffController)).toEqual(['super_admin']);
   });
+
+  it('widens create to the three admin-tier roles, overriding the class-level super_admin-only list', () => {
+    expect(reflector.get(STAFF_ROLES_KEY, StaffController.prototype.create)).toEqual([
+      'super_admin',
+      'regional_admin',
+      'branch_admin',
+    ]);
+  });
 });
 
 describe('AcceptInviteController wiring', () => {

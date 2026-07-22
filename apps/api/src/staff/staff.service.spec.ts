@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { RECLAIM_GRACE_MS, StaffService } from './staff.service';
 
@@ -13,11 +13,27 @@ function build(overrides: {
   ownedByMember?: boolean;
 }) {
   const prisma = {
+    church: {
+      findUnique: vi.fn(() => Promise.resolve({ id: CHURCH })),
+    },
+    region: {
+      findMany: vi.fn(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(where.id.in.map((id) => ({ id }))),
+      ),
+    },
+    branch: {
+      findMany: vi.fn(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(where.id.in.map((id) => ({ id }))),
+      ),
+    },
     staff: {
       findFirst: vi.fn(({ where }: { where: { id?: string; userId?: string } }) => {
         if (where.userId) return Promise.resolve(overrides.ownedByStaff ? { id: 'other' } : null);
         return Promise.resolve(overrides.staff === undefined ? STAFF : overrides.staff);
       }),
+      create: vi.fn(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ id: 'new-staff', userId: null, ...data }),
+      ),
     },
     member: {
       findFirst: vi.fn(() => Promise.resolve(overrides.ownedByMember ? { id: 'member' } : null)),
@@ -33,10 +49,21 @@ function build(overrides: {
 
   const invites = { issue: vi.fn(() => Promise.resolve({ token: 'new', expiresAt: new Date() })) };
 
+  const scopeService = {
+    scopeCovers: vi.fn(() => Promise.resolve(true)),
+    branchInRegion: vi.fn(() => Promise.resolve(true)),
+  };
+
   return {
-    service: new StaffService(prisma as never, invites as never, authUsers as never),
+    service: new StaffService(
+      prisma as never,
+      invites as never,
+      authUsers as never,
+      scopeService as never,
+    ),
     authUsers,
     invites,
+    scopeService,
   };
 }
 
@@ -106,5 +133,199 @@ describe('StaffService.reclaimLogin', () => {
       NotFoundException,
     );
     expect(authUsers.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe('StaffService.create — delegated onboarding authorization', () => {
+  const CHURCH = 'church-1';
+  const REGION = 'region-1';
+  const BRANCH = 'branch-1';
+
+  function callerWith(role: string, scopes: { scopeType: string; scopeRefId: string }[] = []) {
+    return { id: 'caller-1', churchId: CHURCH, role, scopes } as never;
+  }
+
+  it('lets a super_admin create any role with no scope restriction', async () => {
+    const { service, scopeService } = build({});
+    scopeService.scopeCovers.mockResolvedValue(false);
+
+    await expect(
+      service.create(
+        CHURCH,
+        { fullName: 'Ada', email: 'ada@example.test', role: 'branch_admin' },
+        callerWith('super_admin'),
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects finance and recorder outright, even though RolesGuard already blocks them at the route', async () => {
+    const { service } = build({});
+
+    await expect(
+      service.create(
+        CHURCH,
+        { fullName: 'Ada', email: 'ada@example.test', role: 'recorder' },
+        callerWith('finance'),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+
+    await expect(
+      service.create(
+        CHURCH,
+        { fullName: 'Ada', email: 'ada@example.test', role: 'recorder' },
+        callerWith('recorder'),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('rejects a regional_admin trying to create a super_admin', async () => {
+    const { service } = build({});
+
+    await expect(
+      service.create(
+        CHURCH,
+        {
+          fullName: 'Ada',
+          email: 'ada@example.test',
+          role: 'super_admin',
+          scopes: [{ scopeType: 'region', scopeRefId: REGION }],
+        },
+        callerWith('regional_admin', [{ scopeType: 'region', scopeRefId: REGION }]),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it.each([
+    'regional_admin',
+    'branch_admin',
+    'finance',
+    'recorder',
+  ] as const)('lets a regional_admin create a %s scoped to their own region', async (role) => {
+    const { service, scopeService } = build({});
+    scopeService.scopeCovers.mockResolvedValue(true);
+
+    await expect(
+      service.create(
+        CHURCH,
+        {
+          fullName: 'Ada',
+          email: 'ada@example.test',
+          role,
+          scopes: [{ scopeType: 'region', scopeRefId: REGION }],
+        },
+        callerWith('regional_admin', [{ scopeType: 'region', scopeRefId: REGION }]),
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects a branch_admin trying to create a regional_admin or a super_admin', async () => {
+    const { service } = build({});
+
+    await expect(
+      service.create(
+        CHURCH,
+        {
+          fullName: 'Ada',
+          email: 'ada@example.test',
+          role: 'regional_admin',
+          scopes: [{ scopeType: 'branch', scopeRefId: BRANCH }],
+        },
+        callerWith('branch_admin', [{ scopeType: 'branch', scopeRefId: BRANCH }]),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+
+    await expect(
+      service.create(
+        CHURCH,
+        {
+          fullName: 'Ada',
+          email: 'ada@example.test',
+          role: 'super_admin',
+          scopes: [{ scopeType: 'branch', scopeRefId: BRANCH }],
+        },
+        callerWith('branch_admin', [{ scopeType: 'branch', scopeRefId: BRANCH }]),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it.each([
+    'branch_admin',
+    'finance',
+    'recorder',
+  ] as const)('lets a branch_admin create a %s scoped to their own branch', async (role) => {
+    const { service, scopeService } = build({});
+    scopeService.scopeCovers.mockResolvedValue(true);
+
+    await expect(
+      service.create(
+        CHURCH,
+        {
+          fullName: 'Ada',
+          email: 'ada@example.test',
+          role,
+          scopes: [{ scopeType: 'branch', scopeRefId: BRANCH }],
+        },
+        callerWith('branch_admin', [{ scopeType: 'branch', scopeRefId: BRANCH }]),
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects a delegated admin creating staff with no scope at all', async () => {
+    const { service } = build({});
+
+    await expect(
+      service.create(
+        CHURCH,
+        { fullName: 'Ada', email: 'ada@example.test', role: 'recorder' },
+        callerWith('regional_admin', [{ scopeType: 'region', scopeRefId: REGION }]),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  /**
+   * The one assertion that proves the delegated check actually calls ScopeService
+   * rather than just trusting whatever scope the caller listed in the request.
+   */
+  it('rejects a scope ScopeService says the caller does not cover', async () => {
+    const { service, scopeService } = build({});
+    scopeService.scopeCovers.mockResolvedValue(false);
+
+    await expect(
+      service.create(
+        CHURCH,
+        {
+          fullName: 'Ada',
+          email: 'ada@example.test',
+          role: 'recorder',
+          scopes: [{ scopeType: 'branch', scopeRefId: 'someone-elses-branch' }],
+        },
+        callerWith('regional_admin', [{ scopeType: 'region', scopeRefId: REGION }]),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+    expect(scopeService.scopeCovers).toHaveBeenCalledWith(
+      [{ scopeType: 'region', scopeRefId: REGION }],
+      { scopeType: 'branch', scopeRefId: 'someone-elses-branch' },
+    );
+  });
+
+  it('rejects when only some of several scopes are covered', async () => {
+    const { service, scopeService } = build({});
+    scopeService.scopeCovers.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    await expect(
+      service.create(
+        CHURCH,
+        {
+          fullName: 'Ada',
+          email: 'ada@example.test',
+          role: 'recorder',
+          scopes: [
+            { scopeType: 'branch', scopeRefId: BRANCH },
+            { scopeType: 'branch', scopeRefId: 'someone-elses-branch' },
+          ],
+        },
+        callerWith('regional_admin', [{ scopeType: 'region', scopeRefId: REGION }]),
+      ),
+    ).rejects.toThrow(ForbiddenException);
   });
 });

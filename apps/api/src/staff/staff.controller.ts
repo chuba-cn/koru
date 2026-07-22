@@ -24,9 +24,10 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { CallerStaff } from '../auth/caller-staff.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { StaffRoles } from '../auth/staff-roles.decorator';
-import { TenantGuard } from '../auth/tenant.guard';
+import { TenantGuard, TenantStaff } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import {
@@ -52,6 +53,7 @@ export class StaffController {
   constructor(private readonly staffService: StaffService) {}
 
   @Post()
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin')
   @ApiOperation({ summary: 'Register a staff member' })
   @ApiCreatedResponse({
     type: StaffWithInviteDto,
@@ -59,6 +61,10 @@ export class StaffController {
   })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
   @ApiConflictResponse({ description: 'Email already used in this church', type: ErrorResponseDto })
+  @ApiForbiddenResponse({
+    description:
+      'Church does not belong to the session, role cannot create a staff, or a delegated admin tried to grant a role/scope outside their own',
+  })
   @ApiBadRequestResponse({
     description: 'Validation failed, malformed UUID, or scope not in this church',
     type: ErrorResponseDto,
@@ -66,8 +72,9 @@ export class StaffController {
   create(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Body(new ZodValidationPipe(CreateStaffDto.schema)) body: CreateStaffDto,
+    @CallerStaff() caller: TenantStaff,
   ) {
-    return this.staffService.create(churchId, body);
+    return this.staffService.create(churchId, body, caller);
   }
 
   @Get()

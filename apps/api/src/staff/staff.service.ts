@@ -7,14 +7,26 @@ import type {
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AuthUsersService } from '../auth/auth-users.service';
-import { Prisma } from '../generated/prisma/client';
+import { ScopeService } from '../auth/scope.service';
+import type { TenantStaff } from '../auth/tenant.guard';
+import { Prisma, StaffRole } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StaffInviteService } from './staff-invite.service';
+
+/**
+ * info: The roles each delegated (non-super_admin) tier may create. super_admin
+ * is handled separately, as the one caller with no single ceiling at all.
+ */
+const DELEGATED_ROLE_CEILING: Partial<Record<StaffRole, StaffRole[]>> = {
+  regional_admin: ['regional_admin', 'branch_admin', 'finance', 'recorder'],
+  branch_admin: ['branch_admin', 'finance', 'recorder'],
+};
 
 /**
  * Protects someone who has just signed up and is partway through founding their
@@ -48,6 +60,7 @@ export class StaffService {
     private readonly prisma: PrismaService,
     private readonly invites: StaffInviteService,
     private readonly authUsers: AuthUsersService,
+    private readonly scopeService: ScopeService,
   ) {}
 
   private async assertChurchExists(churchId: string) {
@@ -88,10 +101,36 @@ export class StaffService {
     }
   }
 
-  async create(churchId: string, input: CreateStaffInput) {
+  private async assertCanCreateStaff(caller: TenantStaff, target: CreateStaffInput) {
+    if (caller.role === 'super_admin') return;
+
+    const allowedRoles = DELEGATED_ROLE_CEILING[caller.role];
+    if (!allowedRoles) {
+      throw new ForbiddenException('Only an admin may add staff');
+    }
+
+    if (!allowedRoles.includes(target.role)) {
+      throw new ForbiddenException(`A ${caller.role} may not create a ${target.role}`);
+    }
+
+    const scopes = target.scopes ?? [];
+    if (scopes.length === 0) {
+      throw new ForbiddenException(`A delegated ${caller.role} must grant an explicit scope`);
+    }
+
+    for (const scope of scopes) {
+      const covered = await this.scopeService.scopeCovers(caller.scopes, scope);
+      if (!covered) {
+        throw new ForbiddenException(`A ${caller.role} cannot grant a scope outside their own`);
+      }
+    }
+  }
+
+  async create(churchId: string, input: CreateStaffInput, caller: TenantStaff) {
     await this.assertChurchExists(churchId);
     const scopes = input.scopes ?? [];
     await this.assertScopesInChurch(churchId, scopes);
+    await this.assertCanCreateStaff(caller, input);
 
     let staff: Prisma.StaffGetPayload<typeof staffQueryShape>;
 

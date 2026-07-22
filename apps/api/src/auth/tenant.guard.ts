@@ -1,6 +1,15 @@
+import { ScopeInput } from '@koru/shared';
 import type { CanActivate, ExecutionContext } from '@nestjs/common';
 import { ForbiddenException, Injectable, InternalServerErrorException } from '@nestjs/common';
+import { StaffRole } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+export type TenantStaff = {
+  id: string;
+  churchId: string;
+  role: StaffRole;
+  scopes: ScopeInput[];
+};
 
 /**
  * This guard ensures the session's user has a Staff row whose churchId matches the :churchId path param.
@@ -26,14 +35,19 @@ export class TenantGuard implements CanActivate {
 
     const staff = await this.prisma.staff.findUnique({
       where: { userId: session.user.id },
-      select: { id: true, churchId: true, role: true },
+      select: {
+        id: true,
+        churchId: true,
+        role: true,
+        scopes: { select: { scopeType: true, scopeRefId: true } },
+      },
     });
 
     if (!staff || staff.churchId !== churchId) {
       throw new ForbiddenException('You do not have access to this church');
     }
 
-    req.staff = staff;
+    req.staff = staff satisfies TenantStaff;
     return true;
   }
 }

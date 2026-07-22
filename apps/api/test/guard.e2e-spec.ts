@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { createAuthedChurch } from './auth-utils';
+import { createAuthedChurch, createAuthedChurchWithRegion } from './auth-utils';
 import { truncateAll } from './db-utils';
 import { signInMemberByPhone } from './member-auth-utils';
 
@@ -140,5 +140,238 @@ describe('Guards (e2e)', () => {
       .get(`/churches/${church.churchId}/staff`)
       .set('Cookie', cookie)
       .expect(403);
+  });
+
+  it.each([
+    'branch_admin',
+    'finance',
+    'recorder',
+  ] as const)('lets a branch_admin create a %s scoped to their own branch', async (role) => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const branch = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja', regionId: alice.regionId })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'branch_admin',
+        scopes: { create: [{ scopeType: 'branch', scopeRefId: branch.body.id }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Grace Delegate',
+        email: `grace-${role}@example.test`,
+        role,
+        scopes: [{ scopeType: 'branch', scopeRefId: branch.body.id }],
+      })
+      .expect(201);
+  });
+
+  it('403s a branch_admin creating a recorder scoped to a different branch', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const ownBranch = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja', regionId: alice.regionId })
+      .expect(201);
+    const otherBranch = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Lekki', regionId: alice.regionId })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'branch_admin',
+        scopes: { create: [{ scopeType: 'branch', scopeRefId: ownBranch.body.id }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Grace Recorder',
+        email: 'grace@example.test',
+        role: 'recorder',
+        scopes: [{ scopeType: 'branch', scopeRefId: otherBranch.body.id }],
+      })
+      .expect(403);
+  });
+
+  it.each([
+    'regional_admin',
+    'super_admin',
+  ] as const)('403s a branch_admin trying to create a %s', async (role) => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const branch = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja', regionId: alice.regionId })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'branch_admin',
+        scopes: { create: [{ scopeType: 'branch', scopeRefId: branch.body.id }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Above The Ceiling',
+        email: `above-${role}@example.test`,
+        role,
+        scopes: [{ scopeType: 'branch', scopeRefId: branch.body.id }],
+      })
+      .expect(403);
+  });
+
+  it.each([
+    'regional_admin',
+    'branch_admin',
+    'finance',
+    'recorder',
+  ] as const)('lets a regional_admin create a %s scoped to their region', async (role) => {
+    const alice = await createAuthedChurchWithRegion(app);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Region Delegate',
+        email: `region-${role}@example.test`,
+        role,
+        scopes: [{ scopeType: 'region', scopeRefId: alice.regionId }],
+      })
+      .expect(201);
+  });
+
+  it('lets a regional_admin create a recorder scoped to a branch inside their region', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const branch = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja', regionId: alice.regionId })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Branch Recorder',
+        email: 'branch-recorder@example.test',
+        role: 'recorder',
+        scopes: [{ scopeType: 'branch', scopeRefId: branch.body.id }],
+      })
+      .expect(201);
+  });
+
+  it('403s a regional_admin trying to create a super_admin', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Above The Ceiling',
+        email: 'above-super@example.test',
+        role: 'super_admin',
+        scopes: [{ scopeType: 'region', scopeRefId: alice.regionId }],
+      })
+      .expect(403);
+  });
+
+  it('403s a regional_admin creating a recorder scoped to a different region, or its branch', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const otherRegion = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'South', state: 'Rivers' })
+      .expect(201);
+    const branchInOtherRegion = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Port Harcourt', regionId: otherRegion.body.id })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Wrong Region',
+        email: 'wrong-region@example.test',
+        role: 'recorder',
+        scopes: [{ scopeType: 'region', scopeRefId: otherRegion.body.id }],
+      })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Wrong Branch',
+        email: 'wrong-branch@example.test',
+        role: 'recorder',
+        scopes: [{ scopeType: 'branch', scopeRefId: branchInOtherRegion.body.id }],
+      })
+      .expect(403);
+  });
+
+  it('403s finance and recorder attempting to create staff at all', async () => {
+    const alice = await createAuthedChurch(app);
+
+    for (const role of ['finance', 'recorder']) {
+      await prisma.staff.update({ where: { id: alice.staffId }, data: { role } });
+
+      await request(app.getHttpServer())
+        .post(`/churches/${alice.churchId}/staff`)
+        .set('Cookie', alice.cookie)
+        .send({ fullName: 'Someone', email: 'someone@example.test', role: 'recorder' })
+        .expect(403);
+    }
   });
 });
