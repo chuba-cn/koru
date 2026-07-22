@@ -135,7 +135,7 @@ graph LR
         settlement["settlement-account"]
     end
 
-    subgraph delegated["TenantGuard + super_admin<br/><i>only POST /staff also admits<br/>regional_admin/branch_admin —<br/>invite, reclaim, update, remove stay super_admin-only</i>"]
+    subgraph delegated["TenantGuard + super_admin<br/><i>regional_admin/branch_admin also admitted,<br/>capped by tier + own scope —<br/>except invite-reclaim, which stays super_admin-only</i>"]
         staff["staff"]
     end
 
@@ -155,7 +155,7 @@ graph LR
 | `church` | `GET`/`PATCH /churches/:churchId` | Tenant; `PATCH` also needs super_admin |
 | `region` | CRUD under `/churches/:churchId/regions` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
 | `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
-| `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; `POST` also open to `regional_admin`/`branch_admin`, capped by [delegated onboarding](./architecture/delegated-staff-onboarding.md) |
+| `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; every route except invite-reclaim is also open to `regional_admin`/`branch_admin`, capped by [delegated management](./architecture/delegated-staff-management.md) |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
 | `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin |
 | `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard |
@@ -275,7 +275,7 @@ The full standard, including the legitimate skips and the exemplars to copy, is 
 Deep-dive documents for flows too involved to describe here:
 
 - [Staff invitations](./architecture/staff-invitations.md) — how a super admin adds a colleague, how the token works, and what happens on re-use, re-issue and revoke.
-- [Delegated staff onboarding](./architecture/delegated-staff-onboarding.md) — how `regional_admin` and `branch_admin` create staff below their own tier, and how their authority is confined to their own scope.
+- [Delegated staff management](./architecture/delegated-staff-management.md) — how `regional_admin` and `branch_admin` create, update, remove, and manage the invites of staff below their own tier, all confined to their own scope.
 
 ---
 

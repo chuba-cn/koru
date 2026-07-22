@@ -32,11 +32,12 @@ Any future role must be placed on one side of this line explicitly — admin-tie
 scope) or `recorder`-tier (read + specific narrow writes) — rather than left to accumulate whatever
 a controller's decorator list happened to admit.
 
-## Amendment: staff creation is no longer super_admin-only
+## Amendment: staff management is no longer super_admin-only
 
-`regional_admin` and `branch_admin` can now create staff too, each capped at their own tier and
-confined to their own scope — see
-[Delegated staff onboarding](../../../docs/architecture/delegated-staff-onboarding.md)
-(koru-app/koru#49). This does not change the role/tier lines drawn above; it changes who may
+`regional_admin` and `branch_admin` can now create, update, remove, and manage the invites of
+staff too, each capped at their own tier and confined to their own scope — see
+[Delegated staff management](../../../docs/architecture/delegated-staff-management.md)
+(koru-app/koru#49). The one exception is login-reclaim, which stays `super_admin`-only per
+ADR-0012's own reasoning. This does not change the role/tier lines drawn above; it changes who may
 exercise the "admin-tier" staff-management capability that was previously reserved for
 `super_admin` by omission rather than by design.

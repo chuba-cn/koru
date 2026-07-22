@@ -25,12 +25,24 @@ describe('StaffController wiring', () => {
     expect(reflector.get(STAFF_ROLES_KEY, StaffController)).toEqual(['super_admin']);
   });
 
-  it('widens create to the three admin-tier roles, overriding the class-level super_admin-only list', () => {
-    expect(reflector.get(STAFF_ROLES_KEY, StaffController.prototype.create)).toEqual([
+  it.each([
+    'create',
+    'list',
+    'update',
+    'replaceScopes',
+    'reissueInvite',
+    'revokeInvite',
+    'remove',
+  ] as const)('widens %s to the three admin-tier roles, overriding the class-level super_admin-only list', (method) => {
+    expect(reflector.get(STAFF_ROLES_KEY, StaffController.prototype[method])).toEqual([
       'super_admin',
       'regional_admin',
       'branch_admin',
     ]);
+  });
+
+  it('leaves reclaimLogin on the class-level super_admin-only list', () => {
+    expect(reflector.get(STAFF_ROLES_KEY, StaffController.prototype.reclaimLogin)).toBeUndefined();
   });
 });
 
