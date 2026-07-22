@@ -26,7 +26,17 @@ function signedIn(params: Record<string, string>): Request {
  * every lookup would still pass while the guard queried some other user's
  * membership, which is the whole thing this guard exists to prevent.
  */
-function prismaWith(rows: Record<string, { id: string; churchId: string; role: string }>) {
+function prismaWith(
+  rows: Record<
+    string,
+    {
+      id: string;
+      churchId: string;
+      role: string;
+      scopes: { scopeType: string; scopeRefId: string }[];
+    }
+  >,
+) {
   const findUnique = vi.fn(async ({ where }: { where: { userId: string } }) => {
     return rows[where.userId] ?? null;
   });
@@ -37,8 +47,8 @@ function prismaWith(rows: Record<string, { id: string; churchId: string; role: s
 }
 
 const membership = {
-  [USER_ID]: { id: 'staff-1', churchId: OWN_CHURCH, role: 'finance' },
-  'someone-else': { id: 'staff-2', churchId: OTHER_CHURCH, role: 'finance' },
+  [USER_ID]: { id: 'staff-1', churchId: OWN_CHURCH, role: 'finance', scopes: [] },
+  'someone-else': { id: 'staff-2', churchId: OTHER_CHURCH, role: 'finance', scopes: [] },
 };
 
 describe('TenantGuard', () => {
@@ -78,7 +88,27 @@ describe('TenantGuard', () => {
 
     await new TenantGuard(prisma).canActivate(context);
 
-    expect(req.staff).toEqual({ id: 'staff-1', churchId: OWN_CHURCH, role: 'finance' });
+    expect(req.staff).toEqual({ id: 'staff-1', churchId: OWN_CHURCH, role: 'finance', scopes: [] });
+  });
+
+  it("attaches the caller's scopes, so delegated onboarding can check them", async () => {
+    const scoped = {
+      [USER_ID]: {
+        id: 'staff-1',
+        churchId: OWN_CHURCH,
+        role: 'regional_admin',
+        scopes: [{ scopeType: 'region', scopeRefId: 'region-1' }],
+      },
+    };
+
+    const { prisma } = prismaWith(scoped);
+    const { context, req } = contextWith(signedIn({ churchId: OWN_CHURCH }));
+
+    await new TenantGuard(prisma).canActivate(context);
+
+    expect(req.staff).toMatchObject({
+      scopes: [{ scopeType: 'region', scopeRefId: 'region-1' }],
+    });
   });
 
   it('leaves staff unattached on a route with no churchId', async () => {

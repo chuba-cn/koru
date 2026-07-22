@@ -7,14 +7,26 @@ import type {
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AuthUsersService } from '../auth/auth-users.service';
-import { Prisma } from '../generated/prisma/client';
+import { ScopeService } from '../auth/scope.service';
+import type { TenantStaff } from '../auth/tenant.guard';
+import { Prisma, StaffRole } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StaffInviteService } from './staff-invite.service';
+
+/**
+ * info: The roles each delegated (non-super_admin) tier may create. super_admin
+ * is handled separately, as the one caller with no single ceiling at all.
+ */
+const DELEGATED_ROLE_CEILING: Partial<Record<StaffRole, StaffRole[]>> = {
+  regional_admin: ['regional_admin', 'branch_admin', 'finance', 'recorder'],
+  branch_admin: ['branch_admin', 'finance', 'recorder'],
+};
 
 /**
  * Protects someone who has just signed up and is partway through founding their
@@ -48,6 +60,7 @@ export class StaffService {
     private readonly prisma: PrismaService,
     private readonly invites: StaffInviteService,
     private readonly authUsers: AuthUsersService,
+    private readonly scopeService: ScopeService,
   ) {}
 
   private async assertChurchExists(churchId: string) {
@@ -88,10 +101,83 @@ export class StaffService {
     }
   }
 
-  async create(churchId: string, input: CreateStaffInput) {
+  private async assertScopesGrantable(caller: TenantStaff, scopes: ScopeInput[]) {
+    if (caller.role === 'super_admin') return;
+
+    for (const scope of scopes) {
+      const covered = await this.scopeService.scopeCovers(caller.scopes, scope);
+      if (!covered) {
+        throw new ForbiddenException(`A ${caller.role} cannot grant a scope outside their own`);
+      }
+    }
+  }
+
+  private async assertCanCreateStaff(caller: TenantStaff, target: CreateStaffInput) {
+    if (caller.role === 'super_admin') return;
+
+    const allowedRoles = DELEGATED_ROLE_CEILING[caller.role];
+    if (!allowedRoles) {
+      throw new ForbiddenException('Only an admin may add staff');
+    }
+
+    if (!allowedRoles.includes(target.role)) {
+      throw new ForbiddenException(`A ${caller.role} may not create a ${target.role}`);
+    }
+
+    const scopes = target.scopes ?? [];
+    if (scopes.length === 0) {
+      throw new ForbiddenException(`A delegated ${caller.role} must grant an explicit scope`);
+    }
+
+    await this.assertScopesGrantable(caller, scopes);
+  }
+
+  /**
+   * Whether the caller may manage (update, remove, replace scopes on, or
+   * re-issue/revoke the invite of) a staff member who already exists — as
+   * opposed to assertCanCreateStaff, which checks a role/scope being requested.
+   * The target's CURRENT role and scopes are what get checked here, since a
+   * delegated admin's authority over someone doesn't depend on who created them.
+   */
+  private async canManageStaff(
+    caller: TenantStaff,
+    target: { role: StaffRole; scopes: ScopeInput[] },
+  ): Promise<boolean> {
+    if (caller.role === 'super_admin') return true;
+
+    const allowedRoles = DELEGATED_ROLE_CEILING[caller.role];
+    if (!allowedRoles?.includes(target.role)) return false;
+    if (target.scopes.length === 0) return false;
+
+    for (const scope of target.scopes) {
+      if (!(await this.scopeService.scopeCovers(caller.scopes, scope))) return false;
+    }
+    return true;
+  }
+
+  private async assertCanManageStaff(
+    caller: TenantStaff,
+    target: { role: StaffRole; scopes: ScopeInput[] },
+  ) {
+    if (!(await this.canManageStaff(caller, target))) {
+      throw new ForbiddenException(`A ${caller.role} cannot manage this staff member`);
+    }
+  }
+
+  private assertCanAssignRole(caller: TenantStaff, role: StaffRole) {
+    if (caller.role === 'super_admin') return;
+
+    const allowedRoles = DELEGATED_ROLE_CEILING[caller.role];
+    if (!allowedRoles?.includes(role)) {
+      throw new ForbiddenException(`A ${caller.role} cannot assign the role ${role}`);
+    }
+  }
+
+  async create(churchId: string, input: CreateStaffInput, caller: TenantStaff) {
     await this.assertChurchExists(churchId);
     const scopes = input.scopes ?? [];
     await this.assertScopesInChurch(churchId, scopes);
+    await this.assertCanCreateStaff(caller, input);
 
     let staff: Prisma.StaffGetPayload<typeof staffQueryShape>;
 
@@ -119,7 +205,7 @@ export class StaffService {
     return { ...withStatus(staff), invite };
   }
 
-  async list(churchId: string) {
+  async list(churchId: string, caller: TenantStaff) {
     await this.assertChurchExists(churchId);
     const staff = await this.prisma.staff.findMany({
       where: { churchId },
@@ -127,7 +213,10 @@ export class StaffService {
       ...staffQueryShape,
     });
 
-    return staff.map(withStatus);
+    if (caller.role === 'super_admin') return staff.map(withStatus);
+
+    const visibility = await Promise.all(staff.map((s) => this.canManageStaff(caller, s)));
+    return staff.filter((_, index) => visibility[index]).map(withStatus);
   }
 
   async findById(churchId: string, id: string) {
@@ -140,8 +229,14 @@ export class StaffService {
     return withStatus(staff);
   }
 
-  async update(churchId: string, id: string, input: UpdateStaffInput) {
-    await this.findById(churchId, id);
+  async update(churchId: string, id: string, input: UpdateStaffInput, caller: TenantStaff) {
+    const current = await this.findById(churchId, id);
+    await this.assertCanManageStaff(caller, current);
+
+    if (input.role && input.role !== current.role) {
+      this.assertCanAssignRole(caller, input.role);
+    }
+
     const staff = await this.prisma.staff.update({
       where: { id },
       data: input,
@@ -151,9 +246,20 @@ export class StaffService {
     return withStatus(staff);
   }
 
-  async replaceScopes(churchId: string, id: string, input: ReplaceScopesInput) {
-    await this.findById(churchId, id);
+  async replaceScopes(
+    churchId: string,
+    id: string,
+    input: ReplaceScopesInput,
+    caller: TenantStaff,
+  ) {
+    const current = await this.findById(churchId, id);
     await this.assertScopesInChurch(churchId, input.scopes);
+    await this.assertCanManageStaff(caller, current);
+
+    if (caller.role !== 'super_admin' && input.scopes.length === 0) {
+      throw new ForbiddenException(`A delegated ${caller.role} must grant an explicit scope`);
+    }
+    await this.assertScopesGrantable(caller, input.scopes);
 
     const staff = await this.prisma.staff.update({
       where: { id },
@@ -169,21 +275,24 @@ export class StaffService {
     return withStatus(staff);
   }
 
-  async remove(churchId: string, id: string) {
-    await this.findById(churchId, id);
+  async remove(churchId: string, id: string, caller: TenantStaff) {
+    const staff = await this.findById(churchId, id);
+    await this.assertCanManageStaff(caller, staff);
     await this.prisma.staff.delete({ where: { id } });
   }
 
-  async reissueInvite(churchId: string, id: string) {
+  async reissueInvite(churchId: string, id: string, caller: TenantStaff) {
     const staff = await this.findById(churchId, id);
+    await this.assertCanManageStaff(caller, staff);
     if (staff.status === 'active')
       throw new ConflictException('This staff member has already accepted their invite');
 
     return this.invites.issue(id);
   }
 
-  async revokeInvite(churchId: string, id: string) {
-    await this.findById(churchId, id);
+  async revokeInvite(churchId: string, id: string, caller: TenantStaff) {
+    const staff = await this.findById(churchId, id);
+    await this.assertCanManageStaff(caller, staff);
     await this.invites.revokeAllFor(id);
   }
 

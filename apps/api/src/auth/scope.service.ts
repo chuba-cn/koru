@@ -27,7 +27,7 @@ export class ScopeService {
 
       // Deliberately one-directional: a region scope reaches the branches inside
       // it, but a branch scope must never reach back up to its own containing
-      // region — that would let branch-level staff claim region-level authority.
+      // region as that would let branch-level staff claim region-level authority.
       if (scope.scopeType === 'region' && target.scopeType === 'branch') {
         if (await this.branchInRegion(target.scopeRefId, scope.scopeRefId)) return true;
       }

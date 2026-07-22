@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthUsersService } from '../auth/auth-users.service';
 import { RolesGuard } from '../auth/roles.guard';
+import { ScopeService } from '../auth/scope.service';
 import { TenantGuard } from '../auth/tenant.guard';
 import { AcceptInviteController } from './accept-invite.controller';
 import { AcceptInviteService } from './accept-invite.service';
@@ -17,6 +18,7 @@ import { StaffInviteService } from './staff-invite.service';
     StaffInviteService,
     AcceptInviteService,
     AuthUsersService,
+    ScopeService,
   ],
 })
 export class StaffModule {}
