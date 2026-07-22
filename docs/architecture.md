@@ -135,7 +135,7 @@ graph LR
         settlement["settlement-account"]
     end
 
-    subgraph delegated["TenantGuard + super_admin<br/><i>POST also: regional_admin/branch_admin</i>"]
+    subgraph delegated["TenantGuard + super_admin<br/><i>only POST /staff also admits<br/>regional_admin/branch_admin —<br/>invite, reclaim, update, remove stay super_admin-only</i>"]
         staff["staff"]
     end
 

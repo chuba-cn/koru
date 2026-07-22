@@ -364,7 +364,7 @@ describe('Guards (e2e)', () => {
   it('403s finance and recorder attempting to create staff at all', async () => {
     const alice = await createAuthedChurch(app);
 
-    for (const role of ['finance', 'recorder']) {
+    for (const role of ['finance', 'recorder'] as const) {
       await prisma.staff.update({ where: { id: alice.staffId }, data: { role } });
 
       await request(app.getHttpServer())
