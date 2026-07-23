@@ -20,6 +20,17 @@ async function createBranch(
   return res.body as { id: string };
 }
 
+async function acceptInviteAndGetCookie(app: INestApplication, token: string) {
+  const accept = await request(app.getHttpServer())
+    .post('/invites/accept')
+    .send({ token, password: 'correct horse battery' })
+    .expect(201);
+
+  const rawCookies = accept.headers['set-cookie'];
+  if (!rawCookies) throw new Error('Accepting the invite did not set a session cookie');
+  return Array.isArray(rawCookies) ? rawCookies.join('; ') : String(rawCookies);
+}
+
 describe('Staff (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -263,5 +274,118 @@ describe('Staff (e2e)', () => {
       .delete(`/churches/${bob.churchId}/staff/${ada.body.id}`)
       .set('Cookie', bob.cookie)
       .expect(404);
+  });
+
+  it('409s deleting the last super_admin of a church', async () => {
+    const alice = await createAuthedChurch(app);
+
+    await request(app.getHttpServer())
+      .delete(`/churches/${alice.churchId}/staff/${alice.staffId}`)
+      .set('Cookie', alice.cookie)
+      .expect(409);
+  });
+
+  it('409s demoting the last super_admin to any other role', async () => {
+    const alice = await createAuthedChurch(app);
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/staff/${alice.staffId}`)
+      .set('Cookie', alice.cookie)
+      .send({ role: 'recorder' })
+      .expect(409);
+  });
+
+  it('allows deleting or demoting a super_admin when another one remains', async () => {
+    // Alice acts as the roster manager throughout and is never herself a target,
+    // so her own authority never changes mid-test — bob and carol are the ones
+    // whose super_admin status is being reduced, one at a time.
+    const alice = await createAuthedChurch(app);
+    const bob = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({ fullName: 'Bob Second', email: 'bob@example.test', role: 'super_admin' })
+      .expect(201);
+    const carol = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({ fullName: 'Carol Third', email: 'carol@example.test', role: 'super_admin' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/staff/${bob.body.id}`)
+      .set('Cookie', alice.cookie)
+      .send({ role: 'finance' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/churches/${alice.churchId}/staff/${carol.body.id}`)
+      .set('Cookie', alice.cookie)
+      .expect(204);
+  });
+
+  it('under two near-simultaneous demotions of a two-super_admin church, exactly one succeeds', async () => {
+    // Alice and Bob each act with their own session, each demoting the OTHER —
+    // not themselves — so neither request's own caller authority is invalidated
+    // by the other's write. This isolates the race to the actual invariant under
+    // test (does the church keep at least one super_admin) rather than also
+    // racing whichever request happens to touch the caller's own row first.
+    const alice = await createAuthedChurch(app);
+    const bobStaff = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({ fullName: 'Bob Second', email: 'bob-race@example.test', role: 'super_admin' })
+      .expect(201);
+    const bobCookie = await acceptInviteAndGetCookie(app, bobStaff.body.invite.token);
+
+    const [aliceDemotesBob, bobDemotesAlice] = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/churches/${alice.churchId}/staff/${bobStaff.body.id}`)
+        .set('Cookie', alice.cookie)
+        .send({ role: 'finance' }),
+      request(app.getHttpServer())
+        .patch(`/churches/${alice.churchId}/staff/${alice.staffId}`)
+        .set('Cookie', bobCookie)
+        .send({ role: 'finance' }),
+    ]);
+
+    const statuses = [aliceDemotesBob.status, bobDemotesAlice.status];
+    expect(statuses).toContain(200);
+    expect(statuses.filter((status) => status === 200)).toHaveLength(1);
+
+    const remaining = await prisma.staff.count({
+      where: { churchId: alice.churchId, role: 'super_admin' },
+    });
+    expect(remaining).toBe(1);
+  });
+
+  it('under two near-simultaneous deletions of a two-super_admin church, exactly one succeeds', async () => {
+    // Same shape as the demotion race above, but for remove — the shared
+    // assertNotLastSuperAdmin locking path needs its own real concurrency proof
+    // for delete, not just the mocked unit coverage.
+    const alice = await createAuthedChurch(app);
+    const bobStaff = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({ fullName: 'Bob Second', email: 'bob-delete-race@example.test', role: 'super_admin' })
+      .expect(201);
+    const bobCookie = await acceptInviteAndGetCookie(app, bobStaff.body.invite.token);
+
+    const [aliceDeletesBob, bobDeletesAlice] = await Promise.all([
+      request(app.getHttpServer())
+        .delete(`/churches/${alice.churchId}/staff/${bobStaff.body.id}`)
+        .set('Cookie', alice.cookie),
+      request(app.getHttpServer())
+        .delete(`/churches/${alice.churchId}/staff/${alice.staffId}`)
+        .set('Cookie', bobCookie),
+    ]);
+
+    const statuses = [aliceDeletesBob.status, bobDeletesAlice.status];
+    expect(statuses).toContain(204);
+    expect(statuses.filter((status) => status === 204)).toHaveLength(1);
+
+    const remaining = await prisma.staff.count({
+      where: { churchId: alice.churchId, role: 'super_admin' },
+    });
+    expect(remaining).toBe(1);
   });
 });
