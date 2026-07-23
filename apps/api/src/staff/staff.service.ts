@@ -101,6 +101,24 @@ export class StaffService {
     }
   }
 
+  private async assertNotLastSuperAdmin(
+    tx: Prisma.TransactionClient,
+    churchId: string,
+    staffId: string,
+  ) {
+    const superAdmins = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "Staff" WHERE "churchId" = ${churchId} AND role = 'super_admin' FOR UPDATE
+      `;
+
+    const isCurrentlySuperAdmin = superAdmins.some((row) => row.id === staffId);
+    if (!isCurrentlySuperAdmin) return;
+
+    const remaining = superAdmins.filter((row) => row.id !== staffId);
+    if (remaining.length === 0) {
+      throw new ConflictException('A church must always have at least one super_admin');
+    }
+  }
+
   private async assertScopesGrantable(caller: TenantStaff, scopes: ScopeInput[]) {
     if (caller.role === 'super_admin') return;
 
@@ -237,10 +255,19 @@ export class StaffService {
       this.assertCanAssignRole(caller, input.role);
     }
 
-    const staff = await this.prisma.staff.update({
-      where: { id },
-      data: input,
-      ...staffQueryShape,
+    const leavingSuperAdmin =
+      current.role === 'super_admin' && !!input.role && input.role !== 'super_admin';
+
+    const staff = await this.prisma.$transaction(async (tx) => {
+      if (leavingSuperAdmin) {
+        await this.assertNotLastSuperAdmin(tx, churchId, id);
+      }
+
+      return tx.staff.update({
+        where: { id },
+        data: input,
+        ...staffQueryShape,
+      });
     });
 
     return withStatus(staff);
@@ -278,11 +305,18 @@ export class StaffService {
   async remove(churchId: string, id: string, caller: TenantStaff) {
     const staff = await this.findById(churchId, id);
     await this.assertCanManageStaff(caller, staff);
-    await this.prisma.staff.delete({ where: { id } });
+
+    await this.prisma.$transaction(async (tx) => {
+      if (staff.role === 'super_admin') {
+        await this.assertNotLastSuperAdmin(tx, churchId, id);
+      }
+      await tx.staff.delete({ where: { id } });
+    });
   }
 
   async reissueInvite(churchId: string, id: string, caller: TenantStaff) {
     const staff = await this.findById(churchId, id);
+
     await this.assertCanManageStaff(caller, staff);
     if (staff.status === 'active')
       throw new ConflictException('This staff member has already accepted their invite');

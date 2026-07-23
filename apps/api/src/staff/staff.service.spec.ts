@@ -19,6 +19,7 @@ function build(overrides: {
   user?: { id: string; createdAt: Date } | null;
   ownedByStaff?: boolean;
   ownedByMember?: boolean;
+  superAdminIds?: string[];
 }) {
   const prisma = {
     church: {
@@ -48,6 +49,10 @@ function build(overrides: {
       ),
       delete: vi.fn(() => Promise.resolve()),
     },
+    $queryRaw: vi.fn(() =>
+      Promise.resolve((overrides.superAdminIds ?? ['staff-1']).map((id) => ({ id }))),
+    ),
+    $transaction: vi.fn((callback: (tx: unknown) => Promise<unknown>) => callback(prisma)),
     member: {
       findFirst: vi.fn(() => Promise.resolve(overrides.ownedByMember ? { id: 'member' } : null)),
     },
@@ -578,5 +583,77 @@ describe('StaffService — managing existing staff (update/remove/scopes/invite 
     await expect(
       service.update(CHURCH, 'self', { fullName: 'New Name' }, caller),
     ).resolves.toBeDefined();
+  });
+});
+
+describe('StaffService — last super_admin guard', () => {
+  const CHURCH = 'church-1';
+
+  function superAdminCaller() {
+    return { id: 'caller-1', churchId: CHURCH, role: 'super_admin', scopes: [] } as never;
+  }
+
+  it('rejects deleting the last super_admin', async () => {
+    const { service } = build({
+      staff: { id: 'staff-1', churchId: CHURCH, role: 'super_admin', userId: 'user-1' },
+      superAdminIds: ['staff-1'],
+    });
+
+    await expect(service.remove(CHURCH, 'staff-1', superAdminCaller())).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  it('rejects demoting the last super_admin to any other role', async () => {
+    const { service } = build({
+      staff: { id: 'staff-1', churchId: CHURCH, role: 'super_admin', userId: 'user-1' },
+      superAdminIds: ['staff-1'],
+    });
+
+    await expect(
+      service.update(CHURCH, 'staff-1', { role: 'recorder' }, superAdminCaller()),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('allows deleting a super_admin when another remains', async () => {
+    const { service } = build({
+      staff: { id: 'staff-1', churchId: CHURCH, role: 'super_admin', userId: 'user-1' },
+      superAdminIds: ['staff-1', 'staff-2'],
+    });
+
+    await expect(service.remove(CHURCH, 'staff-1', superAdminCaller())).resolves.toBeUndefined();
+  });
+
+  it('allows demoting a super_admin when another remains', async () => {
+    const { service } = build({
+      staff: { id: 'staff-1', churchId: CHURCH, role: 'super_admin', userId: 'user-1' },
+      superAdminIds: ['staff-1', 'staff-2'],
+    });
+
+    await expect(
+      service.update(CHURCH, 'staff-1', { role: 'recorder' }, superAdminCaller()),
+    ).resolves.toBeDefined();
+  });
+
+  it('does not lock or query at all for a non-super_admin removal or update', async () => {
+    const { service, prisma } = build({
+      staff: { id: 'staff-1', churchId: CHURCH, role: 'finance', userId: 'user-1' },
+    });
+
+    await service.remove(CHURCH, 'staff-1', superAdminCaller());
+    await service.update(CHURCH, 'staff-1', { role: 'recorder' }, superAdminCaller());
+
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('re-verifies against the locked read rather than trusting the caller-side role check', async () => {
+    // Simulates the row having already been demoted by a concurrent transaction by the
+    // time this one's lock clears — the locked query no longer lists it as a super_admin.
+    const { service } = build({
+      staff: { id: 'staff-1', churchId: CHURCH, role: 'super_admin', userId: 'user-1' },
+      superAdminIds: [],
+    });
+
+    await expect(service.remove(CHURCH, 'staff-1', superAdminCaller())).resolves.toBeUndefined();
   });
 });
