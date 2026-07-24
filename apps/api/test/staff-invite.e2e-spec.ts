@@ -51,6 +51,43 @@ describe('Staff invitations (e2e)', () => {
     expect(rows).not.toContain(staff.invite.token);
   });
 
+  /**
+   * MailService.send() writes the EmailLog row synchronously (before enqueueing
+   * the BullMQ job that actually delivers it), so this row's existence and
+   * content are guaranteed by the time the HTTP response returns — unlike
+   * ConsoleMailSender's tail, which only fills in once EmailProcessor's worker
+   * picks the job up, asynchronously and on no fixed schedule. Asserting against
+   * the row avoids racing that worker.
+   */
+  it('sends the invite by email, in addition to returning the raw token in the response (#61)', async () => {
+    const { cookie, churchId } = await createAuthedChurch(app);
+    const staff = await inviteStaff(app, churchId, cookie, 'invitee@example.test');
+
+    const log = await prisma.emailLog.findFirstOrThrow({
+      where: { recipientEmail: 'invitee@example.test', category: 'staff_invite' },
+    });
+    expect(log.recipientStaffId).toBe(staff.id);
+    expect(log.renderedHtml).toContain(`token=${staff.invite.token}`);
+  });
+
+  it('re-issuing sends a fresh invite email for the new token', async () => {
+    const { cookie, churchId } = await createAuthedChurch(app);
+    const staff = await inviteStaff(app, churchId, cookie, 'invitee2@example.test');
+
+    const reissued = await request(app.getHttpServer())
+      .post(`/churches/${churchId}/staff/${staff.id}/invite`)
+      .set('Cookie', cookie)
+      .expect(201);
+
+    const logs = await prisma.emailLog.findMany({
+      where: { recipientEmail: 'invitee2@example.test', category: 'staff_invite' },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(logs).toHaveLength(2);
+    expect(logs[0].renderedHtml).toContain(`token=${staff.invite.token}`);
+    expect(logs[1].renderedHtml).toContain(`token=${reissued.body.token}`);
+  });
+
   it('never shows the token again, on any later read', async () => {
     const { cookie, churchId } = await createAuthedChurch(app);
     const staff = await inviteStaff(app, churchId, cookie, 'ada@example.test');

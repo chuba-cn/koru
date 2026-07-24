@@ -3,8 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { RECLAIM_GRACE_MS } from '../src/staff/staff.service';
-import { createAuthedChurch } from './auth-utils';
+import { createAuthedChurch, verifyEmailAndGetCookie } from './auth-utils';
 import { truncateAll } from './db-utils';
 
 const PASSWORD = 'correct horse battery';
@@ -23,14 +22,6 @@ async function addStaff(app: INestApplication, churchId: string, cookie: string,
     .set('Cookie', cookie)
     .send({ fullName: 'Ada Obi', email, role: 'finance' });
   return res;
-}
-
-/** Backdates the login past the grace period, which otherwise blocks reclaim. */
-async function ageLogin(prisma: PrismaService, email: string) {
-  await prisma.user.updateMany({
-    where: { email },
-    data: { createdAt: new Date(Date.now() - RECLAIM_GRACE_MS - 60_000) },
-  });
 }
 
 describe('Invite email squatting (e2e)', () => {
@@ -53,13 +44,12 @@ describe('Invite email squatting (e2e)', () => {
   });
 
   /**
-   * The exact scenario from #33, start to finish, through HTTP only. Any step
-   * that needs raw database access to proceed means the API has no real
-   * recovery path and the bug is not fixed.
+   * The original #33 scenario, updated for #59/#62: a squatter who never verifies
+   * can never sign in at all, so the recovery is deleting their inert login and
+   * re-inviting — clear-login, not reclaim. Start to finish through HTTP only.
    */
-  it('recovers from a squatted email end to end, using only the API', async () => {
+  it('recovers from an unverified squatted email end to end, using only the API', async () => {
     await signUp(app, VICTIM);
-    await ageLogin(prisma, VICTIM);
     const squatterId = (await prisma.user.findFirstOrThrow({ where: { email: VICTIM } })).id;
 
     const { cookie, churchId } = await createAuthedChurch(app);
@@ -71,27 +61,74 @@ describe('Invite email squatting (e2e)', () => {
       .post('/invites/accept')
       .send({ token: staff.body.invite.token, password: PASSWORD });
     expect(blocked.status).toBe(409);
-    expect(blocked.body.message).toMatch(/reclaim/i);
+    expect(blocked.body.message).toMatch(/clear/i);
 
-    const reclaimed = await request(app.getHttpServer())
-      .post(`/churches/${churchId}/staff/${staff.body.id}/invite/reclaim`)
+    const cleared = await request(app.getHttpServer())
+      .post(`/churches/${churchId}/staff/${staff.body.id}/invite/clear-login`)
       .set('Cookie', cookie)
       .expect(201);
 
-    expect(reclaimed.body.token).toBeTruthy();
+    expect(cleared.body.token).toBeTruthy();
     expect(await prisma.user.count({ where: { email: VICTIM } })).toBe(0);
 
     const accepted = await request(app.getHttpServer())
       .post('/invites/accept')
-      .send({ token: reclaimed.body.token, password: PASSWORD })
+      .send({ token: cleared.body.token, password: PASSWORD })
       .expect(201);
 
-    expect(accepted.body.status).toBe('active');
+    expect(accepted.body.emailVerificationRequired).toBe(true);
     expect(accepted.headers['set-cookie']).toBeUndefined();
 
     const linked = await prisma.staff.findFirstOrThrow({ where: { email: VICTIM } });
     expect(linked.userId).toBeTruthy();
     expect(linked.userId).not.toBe(squatterId);
+  });
+
+  /**
+   * The other half of #62's collision resolution: a squatter who HAS verified is
+   * a real, proven person — clear-login refuses them, and the recovery is an
+   * admin linking that proven login instead of destroying it.
+   */
+  it('recovers from a verified squatted email via authenticated linking, not deletion', async () => {
+    await signUp(app, VICTIM);
+    const squatterCookie = await verifyEmailAndGetCookie(app, VICTIM);
+    const squatterId = (await prisma.user.findFirstOrThrow({ where: { email: VICTIM } })).id;
+
+    const { cookie, churchId } = await createAuthedChurch(app);
+
+    const staff = await addStaff(app, churchId, cookie, VICTIM);
+    expect(staff.status).toBe(201);
+
+    const blocked = await request(app.getHttpServer())
+      .post('/invites/accept')
+      .send({ token: staff.body.invite.token, password: PASSWORD });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.message).toMatch(/link/i);
+
+    const linked = await request(app.getHttpServer())
+      .post(`/churches/${churchId}/staff/${staff.body.id}/link-login`)
+      .set('Cookie', cookie)
+      .send({ email: VICTIM })
+      .expect(200);
+
+    expect(linked.body.status).toBe('active');
+
+    const linkedRow = await prisma.staff.findFirstOrThrow({ where: { email: VICTIM } });
+    expect(linkedRow.userId).toBe(squatterId);
+
+    // The invitee's own pre-existing session still works — nothing about linking
+    // touched their account, it only attached the church's staff row to it.
+    const session = await request(app.getHttpServer())
+      .get('/api/auth/get-session')
+      .set('Cookie', squatterCookie)
+      .expect(200);
+    expect(session.body.user.email).toBe(VICTIM);
+
+    // The now-spent invite token can no longer be accepted.
+    await request(app.getHttpServer())
+      .post('/invites/accept')
+      .send({ token: staff.body.invite.token, password: PASSWORD })
+      .expect(400);
   });
 
   it('does not tell an unauthenticated caller whether an email has a login', async () => {
@@ -105,66 +142,50 @@ describe('Invite email squatting (e2e)', () => {
     expect(free.status).toBe(201);
   });
 
-  it('never deletes a login that owns a staff record', async () => {
-    const alice = await createAuthedChurch(app, { emailPrefix: 'alice' });
+  it('never deletes an unverified login that owns a staff record elsewhere', async () => {
     const bob = await createAuthedChurch(app, { emailPrefix: 'bob' });
 
-    const staff = await addStaff(app, bob.churchId, bob.cookie, 'pending@example.test');
-    expect(staff.status).toBe(201);
+    await signUp(app, VICTIM);
+    const squatter = await prisma.user.findFirstOrThrow({ where: { email: VICTIM } });
 
-    await prisma.staff.update({
-      where: { id: staff.body.id },
-      data: { email: alice.email },
-    });
-    await ageLogin(prisma, alice.email);
+    // Simulates a data state assertOwnsNothing must defend against regardless of how
+    // it arose: an unverified login already attached to some OTHER staff row.
+    const owner = await addStaff(app, bob.churchId, bob.cookie, 'owns-a-record@example.test');
+    await prisma.staff.update({ where: { id: owner.body.id }, data: { userId: squatter.id } });
+
+    const target = await addStaff(app, bob.churchId, bob.cookie, VICTIM);
 
     const res = await request(app.getHttpServer())
-      .post(`/churches/${bob.churchId}/staff/${staff.body.id}/invite/reclaim`)
+      .post(`/churches/${bob.churchId}/staff/${target.body.id}/invite/clear-login`)
       .set('Cookie', bob.cookie);
 
     expect(res.status).toBe(409);
     expect(res.body.message).toMatch(/belongs to an existing person/i);
-    expect(await prisma.user.count({ where: { email: alice.email } })).toBe(1);
-  });
-
-  it('refuses to reclaim a login created moments ago, which may be a founder mid-signup', async () => {
-    await signUp(app, VICTIM);
-    const { cookie, churchId } = await createAuthedChurch(app);
-
-    await prisma.user.deleteMany({ where: { email: VICTIM } });
-    const staff = await addStaff(app, churchId, cookie, VICTIM);
-    await signUp(app, VICTIM, 'Founder Mid Signup');
-
-    const res = await request(app.getHttpServer())
-      .post(`/churches/${churchId}/staff/${staff.body.id}/invite/reclaim`)
-      .set('Cookie', cookie);
-
-    expect(res.status).toBe(409);
-    expect(res.body.message).toMatch(/very recently/i);
     expect(await prisma.user.count({ where: { email: VICTIM } })).toBe(1);
   });
 
-  it('only a super_admin of that church can reclaim', async () => {
+  it('only a super_admin of that church can clear-login', async () => {
     const alice = await createAuthedChurch(app, { emailPrefix: 'alice' });
     const bob = await createAuthedChurch(app, { emailPrefix: 'bob' });
+    await signUp(app, VICTIM);
     const staff = await addStaff(app, alice.churchId, alice.cookie, VICTIM);
 
     // Bob aiming at Alice's church: TenantGuard rejects before any lookup.
     await request(app.getHttpServer())
-      .post(`/churches/${alice.churchId}/staff/${staff.body.id}/invite/reclaim`)
+      .post(`/churches/${alice.churchId}/staff/${staff.body.id}/invite/clear-login`)
       .set('Cookie', bob.cookie)
       .expect(403);
 
     // Bob aiming at his own church with her staff id: the scoped lookup misses.
     await request(app.getHttpServer())
-      .post(`/churches/${bob.churchId}/staff/${staff.body.id}/invite/reclaim`)
+      .post(`/churches/${bob.churchId}/staff/${staff.body.id}/invite/clear-login`)
       .set('Cookie', bob.cookie)
       .expect(404);
 
     await prisma.staff.update({ where: { id: alice.staffId }, data: { role: 'finance' } });
 
     await request(app.getHttpServer())
-      .post(`/churches/${alice.churchId}/staff/${staff.body.id}/invite/reclaim`)
+      .post(`/churches/${alice.churchId}/staff/${staff.body.id}/invite/clear-login`)
       .set('Cookie', alice.cookie)
       .expect(403);
   });

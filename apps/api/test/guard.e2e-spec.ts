@@ -580,7 +580,10 @@ describe('Guards (e2e)', () => {
     expect(namesAsRegionalAdmin).not.toContain('Out Of Region');
   });
 
-  it('403s a regional_admin/branch_admin calling the login-reclaim route, which stays super_admin-only', async () => {
+  // Only regional_admin is exercised: RolesGuard checks membership in a fixed role
+  // list with no role-specific branching, so branch_admin would hit the identical
+  // code path — this proves "not super_admin" is refused, not one role in particular.
+  it('403s a regional_admin calling clear-login, which stays super_admin-only', async () => {
     const alice = await createAuthedChurchWithRegion(app);
 
     const recorder = await request(app.getHttpServer())
@@ -588,7 +591,7 @@ describe('Guards (e2e)', () => {
       .set('Cookie', alice.cookie)
       .send({
         fullName: 'Grace Recorder',
-        email: 'grace-reclaim@example.test',
+        email: 'grace-clear@example.test',
         role: 'recorder',
         scopes: [{ scopeType: 'region', scopeRefId: alice.regionId }],
       })
@@ -603,8 +606,65 @@ describe('Guards (e2e)', () => {
     });
 
     await request(app.getHttpServer())
-      .post(`/churches/${alice.churchId}/staff/${recorder.body.id}/invite/reclaim`)
+      .post(`/churches/${alice.churchId}/staff/${recorder.body.id}/invite/clear-login`)
       .set('Cookie', alice.cookie)
+      .expect(403);
+  });
+
+  it('lets a regional_admin call link-login for a staff member within their own scope', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+
+    const recorder = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Grace Recorder',
+        email: 'grace-link@example.test',
+        role: 'recorder',
+        scopes: [{ scopeType: 'region', scopeRefId: alice.regionId }],
+      })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    // No login exists for this email yet, so this hits the 404 the route itself
+    // defines rather than a 403 from the role/scope guards — proving the request
+    // was actually authorized to reach the service at all.
+    const res = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff/${recorder.body.id}/link-login`)
+      .set('Cookie', alice.cookie)
+      .send({ email: 'grace-link@example.test' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('403s a regional_admin calling link-login for a staff member outside their scope', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+
+    const outOfScope = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({ fullName: 'Out Of Region', email: 'out-of-region@example.test', role: 'finance' })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff/${outOfScope.body.id}/link-login`)
+      .set('Cookie', alice.cookie)
+      .send({ email: 'out-of-region@example.test' })
       .expect(403);
   });
 });

@@ -32,6 +32,7 @@ import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import {
   CreateStaffDto,
+  LinkLoginDto,
   ReplaceScopesDto,
   StaffDto,
   StaffInviteDto,
@@ -136,6 +137,39 @@ export class StaffController {
     return this.staffService.replaceScopes(churchId, id, body, caller);
   }
 
+  @Post(':id/link-login')
+  @HttpCode(HttpStatus.OK)
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin')
+  @ApiOperation({
+    summary: 'Link an existing verified login to a pending staff member, instead of inviting them',
+  })
+  @ApiOkResponse({ type: StaffDto, description: 'Staff is now active and linked to that login' })
+  @ApiNotFoundResponse({
+    description: 'Staff not found, or no login for that email',
+    type: ErrorResponseDto,
+  })
+  @ApiConflictResponse({
+    description: 'Already active, the login is unverified, or it is already staff somewhere',
+    type: ErrorResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Email does not match this staff member',
+    type: ErrorResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description:
+      'Church does not belong to the session, or a delegated admin tried to manage staff outside their tier/scope',
+    type: ErrorResponseDto,
+  })
+  linkLogin(
+    @Param('churchId', ParseUUIDPipe) churchId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(LinkLoginDto.schema)) body: LinkLoginDto,
+    @CallerStaff() caller: TenantStaff,
+  ) {
+    return this.staffService.linkLogin(churchId, id, body, caller);
+  }
+
   @Post(':id/invite')
   @StaffRoles('super_admin', 'regional_admin', 'branch_admin')
   @ApiOperation({ summary: 'Re-issue an invite, invalidating any previous one' })
@@ -157,24 +191,31 @@ export class StaffController {
     return this.staffService.reissueInvite(churchId, id, caller);
   }
 
-  @Post(':id/invite/reclaim')
+  @Post(':id/invite/clear-login')
   @ApiOperation({
-    summary: 'Delete a login squatting on this staff email, then issue a fresh invite',
+    summary: 'Delete an unverified login squatting on this staff email, then re-invite',
   })
   @ApiCreatedResponse({
     type: StaffInviteDto,
-    description: 'Login reclaimed; a new invite token is returned once',
+    description: 'Login cleared; a new invite token is returned once',
   })
-  @ApiNotFoundResponse({ description: 'Staff not found, or no login holds that email' })
-  @ApiConflictResponse({
-    description: 'Already accepted, the login owns data, or it is inside the grace period',
+  @ApiNotFoundResponse({
+    description: 'Staff not found, or no login holds that email',
     type: ErrorResponseDto,
   })
-  reclaimLogin(
+  @ApiConflictResponse({
+    description: 'Already accepted, the login is verified, or it owns data',
+    type: ErrorResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Church does not belong to the session, or caller is not super_admin',
+    type: ErrorResponseDto,
+  })
+  clearLogin(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.staffService.reclaimLogin(churchId, id);
+    return this.staffService.clearLogin(churchId, id);
   }
 
   @Delete(':id/invite')

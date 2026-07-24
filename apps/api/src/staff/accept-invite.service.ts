@@ -10,8 +10,14 @@ import { AuthUsersService } from '../auth/auth-users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StaffInviteService } from './staff-invite.service';
 
+export const EMAIL_TAKEN_VERIFIED_MESSAGE =
+  'This email address already has a verified Koru login. Ask an administrator to link that login to your staff record instead of accepting this invite.';
+
+export const EMAIL_TAKEN_UNVERIFIED_MESSAGE =
+  'This email address is already registered to an unverified login. Ask an administrator to clear it, then use the fresh invite they send you.';
+
 export const EMAIL_TAKEN_MESSAGE =
-  'This email address already has a login. Ask an administrator to reclaim it before accepting.';
+  'This email address now has a login. Ask an administrator for help completing your invitation.';
 
 @Injectable()
 export class AcceptInviteService {
@@ -30,8 +36,11 @@ export class AcceptInviteService {
       throw new ConflictException('This staff member already has a login');
     }
 
-    if (await this.authUsers.findByEmail(preflight.staff.email)) {
-      throw new ConflictException(EMAIL_TAKEN_MESSAGE);
+    const existing = await this.authUsers.findByEmail(preflight.staff.email);
+    if (existing) {
+      throw new ConflictException(
+        existing.emailVerified ? EMAIL_TAKEN_VERIFIED_MESSAGE : EMAIL_TAKEN_UNVERIFIED_MESSAGE,
+      );
     }
 
     const invite = await this.invites.claim(input.token);

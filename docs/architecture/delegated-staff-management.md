@@ -5,8 +5,11 @@ below their own tier — without a `super_admin` in the loop for every hire, ren
 
 Part of the [architecture map](../architecture.md).
 
-The short version: every staff route except **login-reclaim** (`POST :id/invite/reclaim`) is open
-to `regional_admin`/`branch_admin`, not just `super_admin`. Two independent limits confine what a
+The short version: every staff route except **clear-login** (`POST :id/invite/clear-login`) is open
+to `regional_admin`/`branch_admin`, not just `super_admin` — that includes `link-login`, which widens
+the same way `reissueInvite` does, since it's a third route to the same outcome (onboarding someone
+the caller already has authority over) that happens to apply when the invitee already has a login.
+Two independent limits confine what a
 delegated caller can do — **which roles**, and **which scope** — applied consistently whether
 they're creating a new staff member or acting on one that already exists.
 
@@ -22,8 +25,8 @@ the route:
 | "May I create *this*?" | `assertCanCreateStaff` | the role/scopes in the **request body** |
 | "May I manage *that*?" | `assertCanManageStaff` / `canManageStaff` | the target staff row's **current** role/scopes |
 
-`update`, `replaceScopes`, `reissueInvite`, `revokeInvite`, `remove`, and `list` all go through the
-second question — a delegated caller's authority over an *existing* staff member depends on what
+`update`, `replaceScopes`, `reissueInvite`, `revokeInvite`, `remove`, `linkLogin`, and `list` all go
+through the second question — a delegated caller's authority over an *existing* staff member depends on what
 that staff member already is, not on who originally created them. Any `regional_admin` who covers a
 recorder's branch can reissue that recorder's invite, whether or not they were the one who created
 it.
@@ -165,13 +168,15 @@ scopes (403).
 
 ## What deliberately did not change
 
-**`POST /staff/:id/invite/reclaim` stays `super_admin`-only.** This route deletes someone else's
-Better Auth login outright — recovering from a squatter having claimed a staff member's email before
-they could accept their invite. That's a categorically more sensitive action than the rest of staff
-management, and it already has its own reasoning in
+**`POST /staff/:id/invite/clear-login` stays `super_admin`-only.** This route deletes someone else's
+Better Auth login outright — recovering from an unverified squatter having claimed a staff member's
+email before they could accept their invite. That's a categorically more sensitive action than the
+rest of staff management: irreversible, and reaching outside the tenant's own data into another
+person's account. It already has its own reasoning in
 [ADR-0012](../../apps/api/docs/adr/0012-unverified-email-reserves-nothing.md), unrelated to
-role/scope delegation. Widening it wasn't part of this change, and doing so would need its own
-deliberate look at ADR-0012's reasoning, not a side effect of this ticket.
+role/scope delegation. `link-login` (attaching a **verified** existing login) is a materially
+different, reversible action — setting a column, not deleting an account — which is exactly why it
+widens to delegated admins while clear-login does not.
 
 ---
 
@@ -179,7 +184,7 @@ deliberate look at ADR-0012's reasoning, not a side effect of this ticket.
 
 - [ADR-0013](../../apps/api/docs/adr/0013-staff-role-capability-matrix.md) — the role capability
   matrix this feature is layered on top of, including its amendment for delegated management.
-- [ADR-0012](../../apps/api/docs/adr/0012-unverified-email-reserves-nothing.md) — why invite-reclaim
-  stays `super_admin`-only.
+- [ADR-0012](../../apps/api/docs/adr/0012-unverified-email-reserves-nothing.md) — why clear-login
+  stays `super_admin`-only, and why link-login doesn't have to.
 - [Staff invitations](./staff-invitations.md) — what happens after a staff record is created,
   regardless of who created or now manages it.

@@ -164,7 +164,7 @@ graph LR
         settlement["settlement-account"]
     end
 
-    subgraph delegated["TenantGuard + super_admin<br/><i>regional_admin/branch_admin also admitted,<br/>capped by tier + own scope —<br/>except invite-reclaim, which stays super_admin-only</i>"]
+    subgraph delegated["TenantGuard + super_admin<br/><i>regional_admin/branch_admin also admitted,<br/>capped by tier + own scope —<br/>except clear-login, which stays super_admin-only</i>"]
         staff["staff"]
     end
 
@@ -186,7 +186,7 @@ graph LR
 | `church` | `GET`/`PATCH /churches/:churchId` | Tenant; `PATCH` also needs super_admin |
 | `region` | CRUD under `/churches/:churchId/regions` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
 | `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
-| `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; every route except invite-reclaim is also open to `regional_admin`/`branch_admin`, capped by [delegated management](./architecture/delegated-staff-management.md) |
+| `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; every route except clear-login is also open to `regional_admin`/`branch_admin`, capped by [delegated management](./architecture/delegated-staff-management.md) |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
 | `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin |
 | `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard |

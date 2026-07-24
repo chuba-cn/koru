@@ -1,5 +1,6 @@
 import type {
   CreateStaffInput,
+  LinkLoginInput,
   ReplaceScopesInput,
   ScopeInput,
   UpdateStaffInput,
@@ -15,9 +16,23 @@ import {
 import { AuthUsersService } from '../auth/auth-users.service';
 import { ScopeService } from '../auth/scope.service';
 import type { TenantStaff } from '../auth/tenant.guard';
+import { requireOriginList } from '../config/env';
 import { Prisma, StaffRole } from '../generated/prisma/client';
+import { MailService } from '../notifications/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { inviteEmailHtml } from './invite-email-template';
 import { StaffInviteService } from './staff-invite.service';
+
+/**
+ * WEB_ORIGIN is a list because Better Auth checks it for CORS/CSRF against several
+ * allowed origins. There is no separate "which one is the real app" setting, so the
+ * first entry is treated as canonical for links we send people. Revisit if staging
+ * and production ever share one list.
+ */
+const WEB_APP_ORIGIN = requireOriginList('WEB_ORIGIN')[0];
+
+const inviteLink = (token: string) =>
+  `${WEB_APP_ORIGIN}/invite/accept?token=${encodeURIComponent(token)}`;
 
 /**
  * info: The roles each delegated (non-super_admin) tier may create. super_admin
@@ -27,16 +42,6 @@ const DELEGATED_ROLE_CEILING: Partial<Record<StaffRole, StaffRole[]>> = {
   regional_admin: ['regional_admin', 'branch_admin', 'finance', 'recorder'],
   branch_admin: ['branch_admin', 'finance', 'recorder'],
 };
-
-/**
- * Protects someone who has just signed up and is partway through founding their
- * own church from having that login deleted underneath them.
- *
- * It does not stop a determined squatter, who can simply re-register and wait,
- * and it gives them a cheap way to re-block the address for an hour. It is a
- * guard against destroying a bystander, not against the attack. See ADR-0012.
- */
-export const RECLAIM_GRACE_MS = 1000 * 60 * 60;
 
 type StaffRow = { userId: string | null };
 
@@ -61,11 +66,13 @@ export class StaffService {
     private readonly invites: StaffInviteService,
     private readonly authUsers: AuthUsersService,
     private readonly scopeService: ScopeService,
+    private readonly mail: MailService,
   ) {}
 
   private async assertChurchExists(churchId: string) {
     const church = await this.prisma.church.findUnique({ where: { id: churchId } });
     if (!church) throw new NotFoundException(`Church ${churchId} not found`);
+    return church;
   }
 
   private async assertScopesInChurch(churchId: string, scopes: ScopeInput[]) {
@@ -191,8 +198,33 @@ export class StaffService {
     }
   }
 
+  /**
+   * Never allowed to fail the mutation that triggered it: the raw token is still
+   * returned in the response, and handing it over out of band is the documented
+   * fallback for an invitee with no working address.
+   */
+  private async sendInviteEmail(
+    churchId: string,
+    staff: { id: string; email: string },
+    churchName: string,
+    token: string,
+  ) {
+    try {
+      await this.mail.send({
+        churchId,
+        category: 'staff_invite',
+        to: staff.email,
+        recipientStaffId: staff.id,
+        subject: `You have been invited to ${churchName} on Koru`,
+        html: inviteEmailHtml(churchName, inviteLink(token)),
+      });
+    } catch (error) {
+      this.logger.error(`Could not queue invite email for staff ${staff.id}: ${error}`);
+    }
+  }
+
   async create(churchId: string, input: CreateStaffInput, caller: TenantStaff) {
-    await this.assertChurchExists(churchId);
+    const church = await this.assertChurchExists(churchId);
     const scopes = input.scopes ?? [];
     await this.assertScopesInChurch(churchId, scopes);
     await this.assertCanCreateStaff(caller, input);
@@ -220,6 +252,7 @@ export class StaffService {
     }
 
     const invite = await this.invites.issue(staff.id);
+    await this.sendInviteEmail(churchId, staff, church.name, invite.token);
     return { ...withStatus(staff), invite };
   }
 
@@ -315,13 +348,16 @@ export class StaffService {
   }
 
   async reissueInvite(churchId: string, id: string, caller: TenantStaff) {
+    const church = await this.assertChurchExists(churchId);
     const staff = await this.findById(churchId, id);
 
     await this.assertCanManageStaff(caller, staff);
     if (staff.status === 'active')
       throw new ConflictException('This staff member has already accepted their invite');
 
-    return this.invites.issue(id);
+    const invite = await this.invites.issue(id);
+    await this.sendInviteEmail(churchId, staff, church.name, invite.token);
+    return invite;
   }
 
   async revokeInvite(churchId: string, id: string, caller: TenantStaff) {
@@ -331,15 +367,63 @@ export class StaffService {
   }
 
   /**
-   * Frees a staff email whose login is held by an account that owns nothing —
-   * either a stranger who signed up with it first, or a half-finished accept.
-   * Deletes that login and issues a fresh invite.
-   *
-   * Requires an authenticated super_admin of this church, because an unverified
-   * email proves nothing about who controls it and only a human inside the
-   * tenant can break the tie. See ADR-0012.
+   * Attaches a login the invitee already has to their pending staff record
    */
-  async reclaimLogin(churchId: string, id: string, now = new Date()) {
+  async linkLogin(churchId: string, id: string, input: LinkLoginInput, caller: TenantStaff) {
+    const staff = await this.findById(churchId, id);
+    await this.assertCanManageStaff(caller, staff);
+
+    if (staff.status === 'active') {
+      throw new ConflictException('This staff member already has a login');
+    }
+
+    if (staff.email.toLowerCase() !== input.email.toLowerCase()) {
+      throw new BadRequestException('That email does not match this staff member');
+    }
+
+    const user = await this.authUsers.findByEmail(input.email);
+    if (!user) {
+      throw new NotFoundException(`No login exists for "${input.email}"`);
+    }
+
+    if (!user.emailVerified) {
+      throw new ConflictException(
+        'That login has not verified its email address, so it cannot be linked',
+      );
+    }
+
+    const alreadyStaff = await this.prisma.staff.findFirst({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+
+    if (alreadyStaff) {
+      throw new ConflictException('That login is already staff at a church');
+    }
+
+    let linked: Prisma.StaffGetPayload<typeof staffQueryShape>;
+    try {
+      linked = await this.prisma.staff.update({
+        where: { id },
+        data: { userId: user.id },
+        ...staffQueryShape,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('That login is already staff at a church');
+      }
+      throw error;
+    }
+
+    await this.invites.revokeAllFor(id);
+    return withStatus(linked);
+  }
+
+  /**
+   * Deletes an unverified login squatting on a staff email, and then re-invites
+   */
+  async clearLogin(churchId: string, id: string) {
+    const church = await this.assertChurchExists(churchId);
     const staff = await this.findById(churchId, id);
 
     if (staff.status === 'active') {
@@ -351,9 +435,9 @@ export class StaffService {
       throw new NotFoundException(`No login is holding "${staff.email}"`);
     }
 
-    if (now.getTime() - user.createdAt.getTime() < RECLAIM_GRACE_MS) {
+    if (user.emailVerified) {
       throw new ConflictException(
-        'That login was created very recently and may belong to someone mid-signup. Try again later.',
+        'That login has a verified email address and belongs to a real person. Link it to this staff member instead of clearing it.',
       );
     }
 
@@ -361,13 +445,15 @@ export class StaffService {
     await this.authUsers.delete(user.id);
 
     /**
-     * The holder could have founded a church between the check and the delete,
-     * which would leave that church with a super_admin whose login no longer
-     * exists. Cheap to detect, and loud is better than silent.
+     * The check and the delete are not one transaction, and an unverified login
+     * can still acquire rows via the phone-OTP path. Cheap to detect after the
+     * fact, and loud is better than silent.
      */
     await this.assertOwnsNothing(user.id, true);
 
-    return this.invites.issue(id);
+    const invite = await this.invites.issue(id);
+    await this.sendInviteEmail(churchId, staff, church.name, invite.token);
+    return invite;
   }
 
   private async assertOwnsNothing(userId: string, afterDelete = false) {
@@ -380,7 +466,7 @@ export class StaffService {
 
     if (afterDelete) {
       this.logger.error(
-        `Login ${userId} acquired ${staff ? 'a staff record' : 'a member record'} during reclaim and was deleted anyway`,
+        `Login ${userId} acquired ${staff ? 'a staff record' : 'a member record'} while being cleared and was deleted anyway`,
       );
       return;
     }
