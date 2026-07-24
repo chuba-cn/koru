@@ -13,11 +13,13 @@ const LOG = {
   renderedHtml: '<p>Hi</p>',
 };
 
-function build() {
+function build(overrides: { updateThrows?: boolean } = {}) {
   const prisma = {
     emailLog: {
       findUniqueOrThrow: vi.fn(() => Promise.resolve(LOG)),
-      update: vi.fn(() => Promise.resolve(LOG)),
+      update: vi.fn(() =>
+        overrides.updateThrows ? Promise.reject(new Error('db unreachable')) : Promise.resolve(LOG),
+      ),
     },
   };
 
@@ -74,5 +76,15 @@ describe('EmailProcessor.process', () => {
       where: { id: LOG.id },
       data: { status: 'failed', failureReason: 'Error: provider down' },
     });
+  });
+
+  it('never marks the row failed, or retries, when the send succeeded but recording that failed', async () => {
+    const { processor } = build({ updateThrows: true });
+    vi.mocked(mailSender.send).mockResolvedValue('provider-msg-1');
+
+    // The email genuinely went out — this must resolve, not throw, even
+    // though the status-update call failed. Throwing here would make BullMQ
+    // retry the job and re-send an email that already succeeded.
+    await expect(processor.process(jobWith(0, 5))).resolves.toBeUndefined();
   });
 });

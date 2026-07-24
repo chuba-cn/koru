@@ -319,6 +319,10 @@ model EmailLog {
   recipientStaffId  String?
   recipientMemberId String?
   subject           String
+  /// For auth_verification/auth_password_reset: NEVER store the real token or
+  /// magic-link URL here — redact it before writing. This row has no retention
+  /// limit, and a stored token stays readable to anyone with DB access long
+  /// after it should be dead. See docs/architecture/email-queue-and-logging.md.
   renderedHtml      String
   providerName      String
   providerMessageId String?             @unique
