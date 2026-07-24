@@ -1,4 +1,5 @@
 import {
+  AcceptInviteResponseSchema,
   CreateStaffSchema,
   ReplaceScopesSchema,
   StaffInviteSchema,
@@ -14,3 +15,4 @@ export class ReplaceScopesDto extends createZodDto(ReplaceScopesSchema) {}
 export class StaffDto extends createZodDto(StaffSchema) {}
 export class StaffInviteDto extends createZodDto(StaffInviteSchema) {}
 export class StaffWithInviteDto extends createZodDto(StaffWithInviteSchema) {}
+export class AcceptInviteResponseDto extends createZodDto(AcceptInviteResponseSchema) {}

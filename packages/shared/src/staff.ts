@@ -75,6 +75,10 @@ export const StaffWithInviteSchema = StaffSchema.extend({
   invite: StaffInviteSchema,
 });
 
+export const AcceptInviteResponseSchema = StaffSchema.extend({
+  emailVerificationRequired: z.literal(true),
+});
+
 /** Bounds mirror Better Auth's minPasswordLength and its 128-char default max. */
 export const AcceptInviteSchema = z.object({
   token: z.string().min(1),
@@ -86,6 +90,7 @@ export const AcceptInviteSchema = z.object({
 
 export type StaffInvite = z.infer<typeof StaffInviteSchema>;
 export type StaffWithInvite = z.infer<typeof StaffWithInviteSchema>;
+export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponseSchema>;
 export type AcceptInviteInput = z.infer<typeof AcceptInviteSchema>;
 export type ScopeInput = z.infer<typeof ScopeInputSchema>;
 export type CreateStaffInput = z.infer<typeof CreateStaffSchema>;

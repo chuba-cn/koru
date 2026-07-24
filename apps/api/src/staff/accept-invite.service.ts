@@ -62,6 +62,11 @@ export class AcceptInviteService {
 
     const { user } = (await response.json()) as { user: { id: string } };
 
+    const realUser = await this.authUsers.findByEmail(staff.email);
+    if (!realUser || realUser.id !== user.id) {
+      throw new ConflictException(EMAIL_TAKEN_MESSAGE);
+    }
+
     const [linked] = await this.prisma.$transaction([
       this.prisma.staff.update({
         where: { id: staff.id },
@@ -76,8 +81,11 @@ export class AcceptInviteService {
     ]);
 
     return {
-      staff: { ...linked, status: 'active' as const },
-      cookies: response.headers.getSetCookie(),
+      staff: { ...linked, status: 'active' as const, emailVerificationRequired: true as const },
+      // Never forward Better Auth's own Set-Cookie here, even though it's empty today —
+      // accepting an invite must never hand back a session before the email is verified,
+      // and that contract shouldn't depend on requireEmailVerification staying configured.
+      cookies: [] as string[],
     };
   }
 }

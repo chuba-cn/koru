@@ -1,5 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { mailSender } from '../src/notifications/mail-sender';
 
 export type AuthedChurch = {
   cookie: string;
@@ -19,6 +20,38 @@ type Options = {
   regionState?: string;
 };
 
+/** The last email ConsoleMailSender captured for `email`, as the link it contains. */
+export function getLastEmailLink(email: string): URL {
+  const sent = mailSender.lastSentTo?.(email);
+  if (!sent) throw new Error(`No email captured for ${email}`);
+
+  const href = sent.html.match(/href="([^"]+)"/)?.[1];
+  if (!href) throw new Error('Email had no link to follow');
+
+  return new URL(href);
+}
+
+/**
+ * Reads the verification link ConsoleMailSender captured for `email`, follows it,
+ * and returns the resulting session cookie. Needed everywhere a test used to type cookies
+ * straight off the sign-up response. `requireEmailVerification` in @auth.ts makes sign-up
+ * itself return no session
+ */
+export async function verifyEmailAndGetCookie(
+  app: INestApplication,
+  email: string,
+): Promise<string> {
+  const url = getLastEmailLink(email);
+  const res = await request(app.getHttpServer())
+    .get(url.pathname)
+    .query(Object.fromEntries(url.searchParams))
+    .redirects(0);
+
+  const rawCookies = res.headers['set-cookie'];
+  if (!rawCookies) throw new Error('Verifying the email did not set a session cookie');
+  return Array.isArray(rawCookies) ? rawCookies.join('; ') : String(rawCookies);
+}
+
 export async function createAuthedChurch(
   app: INestApplication,
   opts: Options = {},
@@ -32,12 +65,9 @@ export async function createAuthedChurch(
     .send({ name: fullName, email, password: 'correct horse battery' })
     .expect(200);
 
-  const rawCookies = signup.headers['set-cookie'];
-  if (!rawCookies) throw new Error('Better Auth did not set a session cookie on sign-up');
-
-  const cookie = Array.isArray(rawCookies) ? rawCookies.join('; ') : String(rawCookies);
   const userId = signup.body?.user?.id;
   if (!userId) throw new Error('Sign-up response missing user.id');
+  const cookie = await verifyEmailAndGetCookie(app, email);
 
   const bootstrap = await request(app.getHttpServer())
     .post('/onboarding/church')

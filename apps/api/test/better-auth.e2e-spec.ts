@@ -3,19 +3,15 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { verifyEmailAndGetCookie } from './auth-utils';
 import { truncateAll } from './db-utils';
 
 const CREDS = { name: 'Ada Obi', email: 'ada@example.com', password: 'correct horse battery' };
 
-/** Sign up via Better Auth's own endpoint and return the session cookie for later requests. */
+/** Sign up, verify the email, and return the resulting session cookie for later requests. */
 async function signUp(app: INestApplication, creds = CREDS): Promise<string> {
-  const res = await request(app.getHttpServer())
-    .post('/api/auth/sign-up/email')
-    .send(creds)
-    .expect(200);
-  const cookies = res.headers['set-cookie'];
-  expect(cookies).toBeDefined();
-  return Array.isArray(cookies) ? cookies.join('; ') : String(cookies);
+  await request(app.getHttpServer()).post('/api/auth/sign-up/email').send(creds).expect(200);
+  return verifyEmailAndGetCookie(app, creds.email);
 }
 
 describe('Better Auth foundation (e2e)', () => {
@@ -52,6 +48,30 @@ describe('Better Auth foundation (e2e)', () => {
     const account = await prisma.account.findFirst();
     expect(account?.password).toBeDefined();
     expect(account?.password).not.toBe(CREDS.password);
+  });
+
+  it('does not set a session on sign-up, and blocks sign-in until the email is verified', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/auth/sign-up/email')
+      .send(CREDS)
+      .expect(200);
+    expect(res.headers['set-cookie']).toBeUndefined();
+
+    await request(app.getHttpServer())
+      .post('/api/auth/sign-in/email')
+      .send({ email: CREDS.email, password: CREDS.password })
+      .expect(403);
+  });
+
+  it('verifying the email signs the caller in (autoSignInAfterVerification)', async () => {
+    const cookie = await signUp(app);
+
+    const res = await request(app.getHttpServer())
+      .get('/api/auth/get-session')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(res.body.user.email).toBe(CREDS.email);
+    expect(res.body.user.emailVerified).toBe(true);
   });
 
   it('signs in with correct credentials and rejects wrong ones', async () => {

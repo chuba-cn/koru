@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { createAuthedChurch } from './auth-utils';
+import { createAuthedChurch, verifyEmailAndGetCookie } from './auth-utils';
 import { truncateAll } from './db-utils';
 
 const PASSWORD = 'correct horse battery';
@@ -73,9 +73,16 @@ describe('Staff invitations (e2e)', () => {
       .expect(201);
 
     expect(accepted.body.status).toBe('active');
+    expect(accepted.body.emailVerificationRequired).toBe(true);
+    expect(accepted.headers['set-cookie']).toBeUndefined();
 
-    const sessionCookie = accepted.headers['set-cookie'];
-    expect(String(sessionCookie)).toContain('session_token');
+    await request(app.getHttpServer())
+      .post('/api/auth/sign-in/email')
+      .send({ email: 'ada@example.test', password: PASSWORD })
+      .expect(403);
+
+    const sessionCookie = await verifyEmailAndGetCookie(app, 'ada@example.test');
+    expect(sessionCookie).toContain('session_token');
 
     await request(app.getHttpServer())
       .post('/api/auth/sign-in/email')
@@ -87,14 +94,16 @@ describe('Staff invitations (e2e)', () => {
     const { cookie, churchId } = await createAuthedChurch(app);
     await inviteStaff(app, churchId, cookie, 'ada@example.test');
 
-    const signup = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .post('/api/auth/sign-up/email')
       .send({ name: 'Imposter', email: 'ada@example.test', password: PASSWORD })
       .expect(200);
 
+    const imposterCookie = await verifyEmailAndGetCookie(app, 'ada@example.test');
+
     await request(app.getHttpServer())
       .get(`/churches/${churchId}/staff`)
-      .set('Cookie', String(signup.headers['set-cookie']))
+      .set('Cookie', imposterCookie)
       .expect(403);
   });
 
