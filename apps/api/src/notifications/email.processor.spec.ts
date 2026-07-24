@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EmailProcessor } from './email.processor';
 import { mailSender } from './mail-sender';
 
 vi.mock('./mail-sender', () => ({
   mailSender: { send: vi.fn() },
 }));
+
+afterEach(() => {
+  vi.mocked(mailSender.send).mockReset();
+});
 
 const LOG = {
   id: 'log-1',
@@ -79,12 +83,18 @@ describe('EmailProcessor.process', () => {
   });
 
   it('never marks the row failed, or retries, when the send succeeded but recording that failed', async () => {
-    const { processor } = build({ updateThrows: true });
+    const { processor, prisma } = build({ updateThrows: true });
     vi.mocked(mailSender.send).mockResolvedValue('provider-msg-1');
 
     // The email genuinely went out — this must resolve, not throw, even
     // though the status-update call failed. Throwing here would make BullMQ
     // retry the job and re-send an email that already succeeded.
     await expect(processor.process(jobWith(0, 5))).resolves.toBeUndefined();
+
+    expect(mailSender.send).toHaveBeenCalledTimes(1);
+    expect(prisma.emailLog.update).toHaveBeenCalledWith({
+      where: { id: LOG.id },
+      data: { status: 'sent', sentAt: expect.any(Date), providerMessageId: 'provider-msg-1' },
+    });
   });
 });
