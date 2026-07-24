@@ -44,4 +44,9 @@ describe('Health (e2e)', () => {
       payments: 0,
     });
   });
+
+  it('GET /health/redis reports reachable against the running Redis', async () => {
+    const res = await request(app.getHttpServer()).get('/health/redis').expect(200);
+    expect(res.body).toEqual({ status: 'ok', redis: 'reachable' });
+  });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { HealthController } from './health.controller';
 
 describe('HealthController wiring', () => {
@@ -15,5 +15,26 @@ describe('HealthController wiring', () => {
       (Reflect.getMetadata('__guards__', target) as unknown[]) ?? [];
 
     expect(guardsOf(HealthController)).toEqual([]);
+  });
+});
+
+describe('HealthController.checkRedis', () => {
+  it('reports ok when the queue client pings successfully', async () => {
+    const emailQueue = { client: Promise.resolve({ info: vi.fn().mockResolvedValue('# Server') }) };
+    const controller = new HealthController({} as never, emailQueue as never);
+
+    await expect(controller.checkRedis()).resolves.toEqual({ status: 'ok', redis: 'reachable' });
+  });
+
+  it('reports error when the ping itself fails, not just an unresolved client', async () => {
+    const emailQueue = {
+      client: Promise.resolve({ info: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) }),
+    };
+    const controller = new HealthController({} as never, emailQueue as never);
+
+    await expect(controller.checkRedis()).resolves.toEqual({
+      status: 'error',
+      redis: 'unreachable',
+    });
   });
 });

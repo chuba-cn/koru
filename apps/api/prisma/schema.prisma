@@ -74,6 +74,25 @@ enum PaymentStatus {
   reversed
 }
 
+enum EmailCategory {
+  staff_invite
+  staff_removed
+  church_welcome
+  payment_confirmation
+  campaign_broadcast
+  auth_verification
+  auth_password_reset
+}
+
+enum EmailDeliveryStatus {
+  queued
+  sent
+  delivered
+  bounced
+  complained
+  failed
+}
+
 enum WebhookStatus {
   received
   processed
@@ -94,6 +113,7 @@ model Church {
   staff              Staff[]
   settlementAccounts SettlementAccount[]
   campaigns          Campaign[]
+  emailLogs          EmailLog[]
 }
 
 model Region {
@@ -129,18 +149,19 @@ model Branch {
 }
 
 model Member {
-  id           String    @id @default(uuid())
-  churchId     String
-  homeBranchId String?
-  fullName     String
-  phone        String
-  email        String?
-  pledges      Pledge[]
-  payments     Payment[]
-  createdAt    DateTime  @default(now())
+  id                String     @id @default(uuid())
+  churchId          String
+  homeBranchId      String?
+  fullName          String
+  phone             String
+  email             String?
+  pledges           Pledge[]
+  payments          Payment[]
+  emailLogsReceived EmailLog[]
+  createdAt         DateTime   @default(now())
 
   church     Church  @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  homeBranch Branch?  @relation(fields: [homeBranchId], references: [id], onDelete: SetNull)
+  homeBranch Branch? @relation(fields: [homeBranchId], references: [id], onDelete: SetNull)
   userId     String?
   user       User?   @relation("MemberUser", fields: [userId], references: [id], onDelete: SetNull)
 
@@ -159,12 +180,13 @@ model Staff {
   paymentsRecorded Payment[]
   createdAt        DateTime  @default(now())
 
-  church           Church        @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  scopes           StaffScope[]
-  invites          StaffInvite[]
-  campaignsCreated Campaign[]
-  userId           String?       @unique
-  user             User?         @relation("StaffUser", fields: [userId], references: [id], onDelete: SetNull)
+  church            Church        @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  scopes            StaffScope[]
+  invites           StaffInvite[]
+  campaignsCreated  Campaign[]
+  emailLogsReceived EmailLog[]
+  userId            String?       @unique
+  user              User?         @relation("StaffUser", fields: [userId], references: [id], onDelete: SetNull)
 
   @@unique([churchId, email])
 }
@@ -286,6 +308,31 @@ model Payment {
   @@index([campaignId])
   @@index([memberId])
   @@index([pledgeId])
+  @@index([status])
+}
+
+model EmailLog {
+  id                String              @id @default(uuid())
+  churchId          String
+  category          EmailCategory
+  recipientEmail    String
+  recipientStaffId  String?
+  recipientMemberId String?
+  subject           String
+  renderedHtml      String
+  providerName      String
+  providerMessageId String?             @unique
+  status            EmailDeliveryStatus @default(queued)
+  failureReason     String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  createdAt         DateTime            @default(now())
+
+  church Church  @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  staff  Staff?  @relation(fields: [recipientStaffId], references: [id], onDelete: SetNull)
+  member Member? @relation(fields: [recipientMemberId], references: [id], onDelete: SetNull)
+
+  @@index([churchId])
   @@index([status])
 }
 

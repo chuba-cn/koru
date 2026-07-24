@@ -57,6 +57,12 @@ _Avoid_: Permission, Role (a Role is *what* they may do; a Scope is *where*)
 A single spreadsheet upload of members/pledges/payments, previewed before it is committed.
 _Avoid_: Upload, Job
 
+**Email Log**:
+The durable record of one outbound email KORU attempted to send — who, what, delivery status, and
+(if it failed) why. Every email sent goes through this, queued and processed asynchronously so a
+slow or down mail provider never blocks the action that triggered it.
+_Avoid_: Notification (too broad — an Email Log is specifically the record of an email attempt)
+
 ### Identity
 
 **Orphan Login**:
