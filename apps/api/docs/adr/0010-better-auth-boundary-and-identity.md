@@ -50,3 +50,22 @@ plugin from its runtime route table. A contributor should not try to merge them 
 doing so would mean hand-maintaining a second description of routes we do not own, which drifts the
 moment Better Auth is upgraded. If a single unified reference is ever wanted, merge the two
 generated documents at the edge; do not re-declare auth routes in Nest.
+
+## Session and token lifetimes, on record
+
+Every lifetime Better Auth would otherwise default silently is set explicitly in `auth.ts`, so each
+value is a decision someone made, not an accident of the library's defaults:
+
+| Constant/option | Value | What it governs |
+|---|---|---|
+| `SESSION_EXPIRES_IN_SECONDS` | 30 days | How long a session cookie is valid before requiring re-authentication |
+| `SESSION_UPDATE_AGE_SECONDS` | 1 day | How often an active session's expiry is pushed forward |
+| `emailVerification.expiresIn` (unset — Better Auth default) | 1 hour | How long a verification link is valid (#59) |
+| `emailAndPassword.resetPasswordTokenExpiresIn` | 1 hour, same as Better Auth's own default | How long a password-reset link is valid (#60/#59) — set explicitly rather than accepted silently, per #60's own acceptance criteria |
+| `phoneNumber.expiresIn` | 300 seconds | How long an OTP code is valid |
+
+`resetPasswordTokenExpiresIn` in particular is worth calling out: #59 shipped it while claiming
+#60's hook-wiring (per that ticket's own "whichever ships first" clause), and the value matches
+Better Auth's own default — the point of setting it explicitly isn't to change the number, it's to
+make the number a recorded decision rather than something a future reader has to go find in a
+third-party library's source to even know exists.
