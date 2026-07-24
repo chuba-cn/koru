@@ -144,7 +144,10 @@ export class StaffController {
     summary: 'Link an existing verified login to a pending staff member, instead of inviting them',
   })
   @ApiOkResponse({ type: StaffDto, description: 'Staff is now active and linked to that login' })
-  @ApiNotFoundResponse({ description: 'Staff not found, or no login for that email' })
+  @ApiNotFoundResponse({
+    description: 'Staff not found, or no login for that email',
+    type: ErrorResponseDto,
+  })
   @ApiConflictResponse({
     description: 'Already active, the login is unverified, or it is already staff somewhere',
     type: ErrorResponseDto,
@@ -196,9 +199,16 @@ export class StaffController {
     type: StaffInviteDto,
     description: 'Login cleared; a new invite token is returned once',
   })
-  @ApiNotFoundResponse({ description: 'Staff not found, or no login holds that email' })
+  @ApiNotFoundResponse({
+    description: 'Staff not found, or no login holds that email',
+    type: ErrorResponseDto,
+  })
   @ApiConflictResponse({
     description: 'Already accepted, the login is verified, or it owns data',
+    type: ErrorResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Church does not belong to the session, or caller is not super_admin',
     type: ErrorResponseDto,
   })
   clearLogin(

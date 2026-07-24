@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AcceptInviteSchema,
   CreateStaffSchema,
+  LinkLoginSchema,
   ReplaceScopesSchema,
   STAFF_ROLES,
 } from './staff.js';
@@ -121,5 +122,25 @@ describe('AcceptInviteSchema', () => {
     expect(AcceptInviteSchema.safeParse({ token: '', password: 'correct horse' }).success).toBe(
       false,
     );
+  });
+});
+
+describe('LinkLoginSchema', () => {
+  it('accepts a plain email address', () => {
+    expect(LinkLoginSchema.safeParse({ email: 'ada@example.test' }).success).toBe(true);
+  });
+
+  it('rejects a malformed email', () => {
+    expect(LinkLoginSchema.safeParse({ email: 'not-an-email' }).success).toBe(false);
+  });
+
+  it('rejects an email longer than 160 characters', () => {
+    const email = `${'a'.repeat(151)}@example.test`;
+    expect(email.length).toBeGreaterThan(160);
+    expect(LinkLoginSchema.safeParse({ email }).success).toBe(false);
+  });
+
+  it('rejects a missing email', () => {
+    expect(LinkLoginSchema.safeParse({}).success).toBe(false);
   });
 });

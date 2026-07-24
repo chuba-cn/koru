@@ -92,9 +92,10 @@ into one branch:
   staff record — the same roles that could already onboard this person by invite.
 - **Unverified → clear it.** `POST /churches/:churchId/staff/:id/invite/clear-login` deletes the
   login (still via `AuthUsersService`/`internalAdapter.deleteUser`, still bounded by "owns nothing")
-  and issues a fresh invite. Super_admin-only: deleting another person's account, even a verified-
-  nothing one, is irreversible and reaches outside the tenant's own data — a materially different
-  action than attaching a `userId` column, which is why it keeps the narrower role than linking does.
+  and issues a fresh invite. Super_admin-only: deleting another person's account is irreversible and
+  reaches outside the tenant's own data, even when that account is confirmed to own nothing — a
+  materially different action than attaching a `userId` column, which is why it keeps the narrower
+  role than linking does.
 
 Full detail, sequence diagrams, and the acceptance-time error messages for both paths live in
 [`docs/architecture/staff-invitations.md`](../../../docs/architecture/staff-invitations.md#when-the-email-is-already-taken).

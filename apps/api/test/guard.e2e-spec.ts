@@ -580,7 +580,10 @@ describe('Guards (e2e)', () => {
     expect(namesAsRegionalAdmin).not.toContain('Out Of Region');
   });
 
-  it('403s a regional_admin/branch_admin calling clear-login, which stays super_admin-only', async () => {
+  // Only regional_admin is exercised: RolesGuard checks membership in a fixed role
+  // list with no role-specific branching, so branch_admin would hit the identical
+  // code path — this proves "not super_admin" is refused, not one role in particular.
+  it('403s a regional_admin calling clear-login, which stays super_admin-only', async () => {
     const alice = await createAuthedChurchWithRegion(app);
 
     const recorder = await request(app.getHttpServer())

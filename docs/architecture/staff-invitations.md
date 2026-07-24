@@ -234,7 +234,8 @@ flowchart TD
 person who controls that inbox; attaching it is the tenant vouching for an identity it can actually
 check, the same trust substitution reclaim always relied on, just now grounded in a fact instead of
 an assumption. Guarded by: the staff record must still be pending, the requested email must match it
-exactly, a login must exist for that email and be verified, and that login must not already be staff
+case-insensitively (the same normalization Better Auth itself applies), a login must exist for that
+email and be verified, and that login must not already be staff
 anywhere (`Staff.userId` is `@unique` — a concurrent double-link is caught by the database itself, not
 just a pre-check). Open to the same roles that can create or re-issue an invite for this staff member
 — a `regional_admin` who could onboard someone by invite can equally onboard them by linking; only

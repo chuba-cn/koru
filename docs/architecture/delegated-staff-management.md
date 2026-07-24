@@ -25,8 +25,8 @@ the route:
 | "May I create *this*?" | `assertCanCreateStaff` | the role/scopes in the **request body** |
 | "May I manage *that*?" | `assertCanManageStaff` / `canManageStaff` | the target staff row's **current** role/scopes |
 
-`update`, `replaceScopes`, `reissueInvite`, `revokeInvite`, `remove`, and `list` all go through the
-second question — a delegated caller's authority over an *existing* staff member depends on what
+`update`, `replaceScopes`, `reissueInvite`, `revokeInvite`, `remove`, `linkLogin`, and `list` all go
+through the second question — a delegated caller's authority over an *existing* staff member depends on what
 that staff member already is, not on who originally created them. Any `regional_admin` who covers a
 recorder's branch can reissue that recorder's invite, whether or not they were the one who created
 it.
