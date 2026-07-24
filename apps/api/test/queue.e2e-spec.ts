@@ -19,12 +19,17 @@ describe('BullMQ smoke test', () => {
 
     try {
       await worker.waitUntilReady();
-      await queue.add('job', { marker: 'hello' });
 
-      await new Promise<void>((resolve, reject) => {
+      // Subscribed before the job is added — a job the worker processes fast
+      // enough to complete between add() resolving and this listener attaching
+      // would otherwise be silently missed, hanging the test until timeout.
+      const done = new Promise<void>((resolve, reject) => {
         worker.on('completed', () => resolve());
         worker.on('failed', (_job, error) => reject(error));
       });
+
+      await queue.add('job', { marker: 'hello' });
+      await done;
 
       expect(processed).toEqual(['hello']);
     } finally {

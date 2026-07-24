@@ -19,6 +19,7 @@ export class EmailProcessor extends WorkerHost {
         log.recipientEmail,
         log.subject,
         log.renderedHtml,
+        log.id,
       );
       await this.prisma.emailLog.update({
         where: { id: log.id },

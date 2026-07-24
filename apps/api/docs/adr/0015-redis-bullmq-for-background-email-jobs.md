@@ -13,7 +13,17 @@ This reopens a call made in koru-app/koru#64's first draft — "no queue, sends 
 mirroring how the staff-invite email is sent today" — on reliability grounds: an inline, awaited
 send can hang or fail an unrelated core action (staff removal 500ing on a dead mail API), and an
 unawaited one is silently lost on a crash or redeploy between responding and the send completing.
-Both are unacceptable for a product handling real churches' money and staff changes. `@nestjs/bullmq`
+Both are unacceptable for a product handling real churches' money and staff changes.
+
+**This closes the hang/500 failure mode outright, and narrows the silent-loss one — it does not
+fully close it.** `MailService.send` writes the `EmailLog` row and enqueues the job as two separate
+awaited calls, not one transaction. A crash in that narrow window leaves a row stuck at `status:
+queued` forever, with no reconciliation sweep today to notice and re-enqueue it — accepted for now,
+pre-launch and at this volume, and tracked as its own ticket (koru-app/koru#76) rather than solved
+here. See [Email queue and delivery logging](../../../docs/architecture/email-queue-and-logging.md)
+for the full picture.
+
+`@nestjs/bullmq`
 is the standard NestJS integration for BullMQ (not the older `@nestjs/bull`, which wraps the
 deprecated Bull library); Redis is required, wired via one required `REDIS_URL`, no optional/disabled
 state, because every email send now depends on it.

@@ -63,9 +63,19 @@ flowchart TD
     B -->|no, but process crashes<br/>right after| D["Email is silently lost forever —<br/>no record it was ever supposed to happen"]
 ```
 
-A queue backed by Redis closes both: the request returns as soon as the `EmailLog` row exists and
-the job is enqueued, and the job survives a crash or redeploy because it's durable, not an
-in-memory promise. See [ADR-0015](../../apps/api/docs/adr/0015-redis-bullmq-for-background-email-jobs.md)
+A queue backed by Redis closes the first failure mode outright, and narrows the second
+considerably: the request returns as soon as the `EmailLog` row exists and the job is enqueued, and
+once enqueued, the job survives a crash or redeploy because it's durable, not an in-memory promise.
+
+**This is not fully atomic, and that residual gap is deliberate, not hidden.** `MailService.send`
+does two separate writes — commit the `EmailLog` row to Postgres, then enqueue the job in Redis. A
+crash in the narrow window between those two calls leaves a row permanently stuck at `status:
+queued` with no job ever created for it — not "silently lost" in the sense of leaving no trace (the
+row exists, and is visible to anyone querying `EmailLog` directly), but there is no automated
+reconciliation sweep today that would notice a stuck row and re-enqueue it. Closing this fully would
+mean either a transactional outbox (write the row and a "needs enqueuing" marker in one Postgres
+transaction, have a separate process poll for markers) or accepting the gap as-is at this
+volume/stage. See [ADR-0015](../../apps/api/docs/adr/0015-redis-bullmq-for-background-email-jobs.md)
 for the full reasoning, including why this reverses an earlier "inline is fine" draft of the same
 design.
 

@@ -41,6 +41,20 @@ describe('EmailProcessor.process', () => {
     });
   });
 
+  it('sends with the EmailLog id as the idempotency key, so a retry after a successful send never double-sends', async () => {
+    const { processor } = build();
+    vi.mocked(mailSender.send).mockResolvedValue('provider-msg-1');
+
+    await processor.process(jobWith(0, 5));
+
+    expect(mailSender.send).toHaveBeenCalledWith(
+      LOG.recipientEmail,
+      LOG.subject,
+      LOG.renderedHtml,
+      LOG.id,
+    );
+  });
+
   it('leaves the row untouched on a failed attempt that still has retries remaining', async () => {
     const { processor, prisma } = build();
     vi.mocked(mailSender.send).mockRejectedValue(new Error('temporary outage'));
