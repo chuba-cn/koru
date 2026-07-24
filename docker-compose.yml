@@ -12,5 +12,23 @@ services:
     volumes:
       - koru_pgdata:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    container_name: koru-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - '6379:6379'
+    volumes:
+      - koru_redisdata:/data
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: koru-mailpit
+    restart: unless-stopped
+    ports:
+      - '1025:1025'
+      - '8025:8025'
 volumes:
   koru_pgdata:
+  koru_redisdata:

@@ -15,6 +15,35 @@ Where this fits with the other docs:
 
 ---
 
+## Local development
+
+Everything the API needs locally runs through one compose file:
+
+```bash
+docker compose up -d
+```
+
+This brings up three services:
+
+| Service | Port(s) | What it's for |
+|---|---|---|
+| `postgres` | `5432` | The database. `DATABASE_URL` in `apps/api/.env` points here. |
+| `redis` | `6379` | Backs the BullMQ `email` queue (`REDIS_URL`) — required, not optional; every email send goes through it. |
+| `mailpit` | `1025` (SMTP), `8025` (web UI) | Captures every email `SmtpMailSender` sends when `SMTP_HOST`/`SMTP_PORT` point here, so you can see the actual rendered HTML at [http://localhost:8025](http://localhost:8025) instead of reading raw markup off a console log. |
+
+Copy `apps/api/.env.example` to `apps/api/.env` and fill in the required vars. `RESEND_API_KEY`/
+`MAIL_FROM` and `SMTP_HOST`/`SMTP_PORT` are both optional pairs — set the Resend pair to send real
+email, set the SMTP pair to send to Mailpit instead, or set neither to fall back to
+`ConsoleMailSender` (logs to stdout, dev/test only). If both pairs are set, Resend wins. See
+[Email queue and delivery logging](./architecture/email-queue-and-logging.md) for how a send
+actually flows through the queue once it leaves `mail-sender.ts`.
+
+`GET /health/redis` (alongside the existing `/health` and `/health/db`) confirms the app can reach
+Redis — useful after a fresh `docker compose up` to check everything is actually wired before
+chasing a real bug.
+
+---
+
 ## The shape of the system
 
 ```mermaid
@@ -145,12 +174,14 @@ graph LR
         common["common"]
         config["config"]
         docs["docs"]
+        queue["queue"]
+        notifications["notifications"]
     end
 ```
 
 | Module | Routes | Protection |
 |---|---|---|
-| `health` | `GET /health`, `GET /health/db` | Public |
+| `health` | `GET /health`, `GET /health/db`, `GET /health/redis` | Public |
 | `onboarding` | `POST /onboarding/church` | Session only — you have no church yet |
 | `church` | `GET`/`PATCH /churches/:churchId` | Tenant; `PATCH` also needs super_admin |
 | `region` | CRUD under `/churches/:churchId/regions` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
@@ -161,7 +192,7 @@ graph LR
 | `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard |
 | `member` (join) | `GET /join/:churchId/branches`, `POST /join/:churchId` (201 create / 200 update) | Session; `POST` also needs a verified phone |
 
-Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar).
+Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar), `queue` (the BullMQ connection and the `email` queue, registered `@Global()` the same way `prisma` is), `notifications` (`MailService` and `EmailProcessor`). `notifications` is the first background-job module in the codebase — see [Email queue and delivery logging](./architecture/email-queue-and-logging.md) for the full flow, retry/backoff behavior, and why a queue exists here at all.
 
 ---
 
@@ -276,6 +307,7 @@ Deep-dive documents for flows too involved to describe here:
 
 - [Staff invitations](./architecture/staff-invitations.md) — how a super admin adds a colleague, how the token works, and what happens on re-use, re-issue and revoke.
 - [Delegated staff management](./architecture/delegated-staff-management.md) — how `regional_admin` and `branch_admin` create, update, remove, and manage the invites of staff below their own tier, all confined to their own scope.
+- [Email queue and delivery logging](./architecture/email-queue-and-logging.md) — how `MailService`/`EmailProcessor` send email through a durable BullMQ queue instead of inline, how retry/backoff and dead-lettering work, and how the three interchangeable senders (Resend/SMTP/Console) are chosen.
 
 ---
 

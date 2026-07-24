@@ -1,14 +1,20 @@
 import { koboToNaira } from '@koru/shared';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AllowAnonymous } from '@thallesp/nestjs-better-auth';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('health')
 @AllowAnonymous()
 @Controller('health')
 export class HealthController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue('email') private readonly emailQueue: Queue,
+  ) {}
+
   @Get()
   check() {
     return {
@@ -36,5 +42,22 @@ export class HealthController {
       pledges,
       payments,
     };
+  }
+
+  @Get('redis')
+  async checkRedis() {
+    try {
+      const client = await this.emailQueue.client;
+      await client.info();
+      return {
+        status: 'ok',
+        redis: 'reachable',
+      };
+    } catch {
+      return {
+        status: 'error',
+        redis: 'unreachable',
+      };
+    }
   }
 }

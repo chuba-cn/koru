@@ -1,8 +1,14 @@
+import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
-import { requireEnvPairOrNone } from '../config/env';
+import { requireEnv, requireEnvPairOrNone } from '../config/env';
 
 export interface MailSender {
-  send(to: string, subject: string, html: string, idempotencyKey?: string): Promise<void>;
+  send(
+    to: string,
+    subject: string,
+    html: string,
+    idempotencyKey?: string,
+  ): Promise<string | undefined>;
 }
 
 /**
@@ -24,6 +30,8 @@ class ConsoleMailSender implements MailSender {
     this.tail.push({ to, subject, html });
 
     if (this.tail.length > 20) this.tail.shift();
+
+    return undefined;
   }
 
   /** This is for test only: the most recent message sent to this address */
@@ -43,7 +51,7 @@ class ResendMailSender implements MailSender {
   }
 
   async send(to: string, subject: string, html: string, idempotencyKey?: string) {
-    const { error } = await this.client.emails.send(
+    const { data, error } = await this.client.emails.send(
       { from: this.from, to, subject, html },
       idempotencyKey ? { idempotencyKey } : undefined,
     );
@@ -51,13 +59,47 @@ class ResendMailSender implements MailSender {
     if (error) {
       throw new Error(`Resend refused the send: ${error.name} - ${error.message}`);
     }
+
+    return data?.id;
+  }
+}
+/**
+ * Local development only, backed by Mailpit, never selected in prod
+ * (SMTP_HOST/PORT are dev-only env vars nobody sets in a deployed environment,
+ * but the guard is explicit rather than assumed , matching the other two senders).
+ */
+class SmtpMailSender implements MailSender {
+  private readonly transport: nodemailer.Transporter;
+
+  constructor(
+    host: string,
+    port: number,
+    private readonly from: string,
+  ) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('SmtpMailSender must not run in production, wire a real MailSender first.');
+    }
+
+    this.transport = nodemailer.createTransport({ host, port, secure: false });
+  }
+
+  async send(to: string, subject: string, html: string) {
+    const info = await this.transport.sendMail({ from: this.from, to, subject, html });
+    return info.messageId;
   }
 }
 
-const resendCredentials = requireEnvPairOrNone('RESEND_API_KEY', 'MAIL_FROM');
+const resendApiKey = process.env.RESEND_API_KEY?.trim();
+const smtpCredentials = requireEnvPairOrNone('SMTP_HOST', 'SMTP_PORT');
 
 export const mailSender: MailSender & {
   lastSentTo?(to: string): { to: string; subject: string; html: string } | undefined;
-} = resendCredentials
-  ? new ResendMailSender(resendCredentials.first, resendCredentials.second)
-  : new ConsoleMailSender();
+} = resendApiKey
+  ? new ResendMailSender(resendApiKey, requireEnv('MAIL_FROM'))
+  : smtpCredentials
+    ? new SmtpMailSender(
+        smtpCredentials.first,
+        Number(smtpCredentials.second),
+        requireEnv('MAIL_FROM'),
+      )
+    : new ConsoleMailSender();

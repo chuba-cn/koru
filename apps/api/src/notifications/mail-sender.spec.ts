@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, sendMail } = vi.hoisted(() => ({ send: vi.fn(), sendMail: vi.fn() }));
 
 vi.mock('resend', () => ({
   Resend: class {
@@ -8,17 +8,22 @@ vi.mock('resend', () => ({
   },
 }));
 
+vi.mock('nodemailer', () => ({
+  default: { createTransport: vi.fn().mockReturnValue({ sendMail }) },
+}));
+
 afterEach(() => {
   vi.unstubAllEnvs();
   send.mockReset();
+  sendMail.mockReset();
 });
 
 describe('ConsoleMailSender (via the exported mailSender singleton)', () => {
   it('logs the send and records it in the tail for tests to read back', async () => {
-    // Cleared explicitly rather than trusting their absence — env.ts loads a real
-    // .env via dotenv, and a developer's local file may genuinely set these.
     vi.stubEnv('RESEND_API_KEY', '');
     vi.stubEnv('MAIL_FROM', '');
+    vi.stubEnv('SMTP_HOST', '');
+    vi.stubEnv('SMTP_PORT', '');
     vi.resetModules();
     const { mailSender } = await import('./mail-sender.js');
 
@@ -34,6 +39,8 @@ describe('ConsoleMailSender (via the exported mailSender singleton)', () => {
   it('refuses to run in production', async () => {
     vi.stubEnv('RESEND_API_KEY', '');
     vi.stubEnv('MAIL_FROM', '');
+    vi.stubEnv('SMTP_HOST', '');
+    vi.stubEnv('SMTP_PORT', '');
     vi.stubEnv('NODE_ENV', 'production');
     vi.resetModules();
     const { mailSender } = await import('./mail-sender.js');
@@ -43,12 +50,13 @@ describe('ConsoleMailSender (via the exported mailSender singleton)', () => {
     );
   });
 
-  it('fails to boot if exactly one of RESEND_API_KEY/MAIL_FROM is set', async () => {
-    vi.stubEnv('RESEND_API_KEY', 'only-one');
-    vi.stubEnv('MAIL_FROM', '');
+  it('fails to boot if exactly one of SMTP_HOST/SMTP_PORT is set', async () => {
+    vi.stubEnv('RESEND_API_KEY', '');
+    vi.stubEnv('SMTP_HOST', 'localhost');
+    vi.stubEnv('SMTP_PORT', '');
     vi.resetModules();
 
-    await expect(import('./mail-sender.js')).rejects.toThrow(/MAIL_FROM is missing/);
+    await expect(import('./mail-sender.js')).rejects.toThrow(/SMTP_PORT is missing/);
   });
 });
 
@@ -60,7 +68,8 @@ describe('ResendMailSender', () => {
     vi.resetModules();
 
     const { mailSender } = await import('./mail-sender.js');
-    await mailSender.send('ada@example.test', 'Welcome', '<p>Hi</p>', 'idem-key-1');
+    const result = await mailSender.send('ada@example.test', 'Welcome', '<p>Hi</p>', 'idem-key-1');
+    expect(result).toBe('email-1');
 
     expect(send).toHaveBeenCalledWith(
       {
@@ -87,5 +96,38 @@ describe('ResendMailSender', () => {
     await expect(mailSender.send('ada@example.test', 'Welcome', '<p>Hi</p>')).rejects.toThrow(
       /validation_error/,
     );
+  });
+});
+
+describe('SmtpMailSender', () => {
+  it('sends over SMTP to the configured host/port and returns the message id', async () => {
+    vi.stubEnv('RESEND_API_KEY', '');
+    vi.stubEnv('SMTP_HOST', 'localhost');
+    vi.stubEnv('SMTP_PORT', '1025');
+    vi.stubEnv('MAIL_FROM', 'KORU <no-reply@koru.test>');
+    sendMail.mockResolvedValue({ messageId: 'smtp-msg-1' });
+    vi.resetModules();
+
+    const { mailSender } = await import('./mail-sender.js');
+    const result = await mailSender.send('ada@example.test', 'Welcome', '<p>Hi</p>');
+
+    expect(sendMail).toHaveBeenCalledWith({
+      from: 'KORU <no-reply@koru.test>',
+      to: 'ada@example.test',
+      subject: 'Welcome',
+      html: '<p>Hi</p>',
+    });
+    expect(result).toBe('smtp-msg-1');
+  });
+
+  it('refuses to run in production', async () => {
+    vi.stubEnv('RESEND_API_KEY', '');
+    vi.stubEnv('SMTP_HOST', 'localhost');
+    vi.stubEnv('SMTP_PORT', '1025');
+    vi.stubEnv('MAIL_FROM', 'KORU <no-reply@koru.test>');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.resetModules();
+
+    await expect(import('./mail-sender.js')).rejects.toThrow(/must not run in production/);
   });
 });

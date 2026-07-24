@@ -7,8 +7,10 @@ import { ChurchModule } from './church/church.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { HealthModule } from './health/health.module';
 import { MemberModule } from './member/member.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { QueueModule } from './queue/queue.module';
 import { RegionModule } from './region/region.module';
 import { SettlementAccountModule } from './settlement-account/settlement-account.module';
 import { StaffModule } from './staff/staff.module';
@@ -17,6 +19,8 @@ import { StaffModule } from './staff/staff.module';
   imports: [
     HealthModule,
     PrismaModule,
+    QueueModule,
+    NotificationsModule,
     ChurchModule,
     RegionModule,
     BranchModule,
