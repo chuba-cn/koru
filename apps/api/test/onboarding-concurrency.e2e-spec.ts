@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { verifyEmailAndGetCookie } from './auth-utils';
 import { truncateAll } from './db-utils';
 
 const PASSWORD = 'correct horse battery';
@@ -38,12 +39,12 @@ describe('Onboarding concurrency (e2e)', () => {
    */
   it('concurrent bootstraps leave exactly one church and no orphan rows', async () => {
     const email = `founder-${Date.now()}@example.test`;
-    const signup = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .post('/api/auth/sign-up/email')
       .send({ name: 'Ada Obi', email, password: PASSWORD })
       .expect(200);
 
-    const cookie = String(signup.headers['set-cookie']);
+    const cookie = await verifyEmailAndGetCookie(app, email);
     const body = { churchName: 'Celebration Church', fullName: 'Ada Obi' };
 
     const [first, second] = await Promise.all([

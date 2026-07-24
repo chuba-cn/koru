@@ -84,7 +84,15 @@ describe('Google sign-in (e2e)', () => {
   });
 
   it('email-mismatch: an anonymous Google sign-in colliding with an unverified password account is rejected, not linked', async () => {
-    const { email } = await createAuthedChurch(app, { emailPrefix: 'alice' });
+    // Deliberately a raw sign-up, not createAuthedChurch — this test's whole point is an
+    // UNVERIFIED colliding account. createAuthedChurch now completes real email verification
+    // (requireEmailVerification, #59), so it would produce a verified account and defeat the
+    // scenario this test exists to cover.
+    const email = 'alice-imposter-target@example-church.test';
+    await request(app.getHttpServer())
+      .post('/api/auth/sign-up/email')
+      .send({ name: 'Alice', email, password: 'correct horse battery' })
+      .expect(200);
 
     const result = await signInWithFakeGoogle(app, { sub: 'google-alice-imposter', email });
 
@@ -95,10 +103,13 @@ describe('Google sign-in (e2e)', () => {
     expect(await prisma.account.count({ where: { providerId: 'google' } })).toBe(0);
     expect(await prisma.user.count({ where: { email } })).toBe(1);
 
+    // The correct password still 403s here — the account is deliberately unverified, and that's
+    // unrelated to the Google-linking rejection above. Proves the rejected Google attempt didn't
+    // silently verify or otherwise touch the real account.
     await request(app.getHttpServer())
       .post('/api/auth/sign-in/email')
       .send({ email, password: 'correct horse battery' })
-      .expect(200);
+      .expect(403);
   });
 
   it('linking: an already-logged-in staff member can connect Google to their existing account, then log in with it', async () => {

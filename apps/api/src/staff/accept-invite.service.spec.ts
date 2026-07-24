@@ -18,7 +18,7 @@ const USER = { id: 'user-1' };
 function okResponse() {
   return {
     ok: true,
-    headers: { getSetCookie: () => ['session=abc'] },
+    headers: { getSetCookie: () => [] },
     json: () => Promise.resolve({ user: USER }),
   };
 }
@@ -27,7 +27,13 @@ function failedResponse(status: number, detail: string) {
   return { ok: false, status, text: () => Promise.resolve(detail) };
 }
 
-function build(overrides: { staff?: Partial<typeof STAFF>; existingLogin?: unknown } = {}) {
+function build(
+  overrides: {
+    staff?: Partial<typeof STAFF>;
+    existingLogin?: unknown;
+    postSignupUser?: unknown;
+  } = {},
+) {
   const staff = { ...STAFF, ...overrides.staff };
   const invite = { ...INVITE, staff };
 
@@ -37,9 +43,10 @@ function build(overrides: { staff?: Partial<typeof STAFF>; existingLogin?: unkno
     release: vi.fn(() => Promise.resolve()),
   };
 
-  const authUsers = {
-    findByEmail: vi.fn(() => Promise.resolve(overrides.existingLogin ?? null)),
-  };
+  const findByEmail = vi.fn();
+  findByEmail.mockResolvedValueOnce(overrides.existingLogin ?? null);
+  findByEmail.mockResolvedValue('postSignupUser' in overrides ? overrides.postSignupUser : USER);
+  const authUsers = { findByEmail };
 
   const prisma = {
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
@@ -79,7 +86,8 @@ describe('AcceptInviteService.accept', () => {
     const result = await service.accept({ token: 'raw', password: 'secret123' });
 
     expect(result.staff.status).toBe('active');
-    expect(result.cookies).toEqual(['session=abc']);
+    expect(result.staff.emailVerificationRequired).toBe(true);
+    expect(result.cookies).toEqual([]);
     expect(prisma.staff.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: STAFF.id }, data: { userId: USER.id } }),
     );
@@ -126,5 +134,19 @@ describe('AcceptInviteService.accept', () => {
       EMAIL_TAKEN_MESSAGE,
     );
     expect(invites.release).not.toHaveBeenCalled();
+  });
+
+  it('rejects a raced duplicate — signUpEmail can return 200 with a synthetic, unpersisted user once requireEmailVerification is on', async () => {
+    const { service, prisma } = build({ postSignupUser: { id: 'someone-elses-real-user-id' } });
+    signUpEmail.mockResolvedValue({
+      ok: true,
+      headers: { getSetCookie: () => [] },
+      json: () => Promise.resolve({ user: { id: 'synthetic-fabricated-id' } }),
+    });
+
+    await expect(service.accept({ token: 'raw', password: 'secret123' })).rejects.toThrow(
+      EMAIL_TAKEN_MESSAGE,
+    );
+    expect(prisma.staff.update).not.toHaveBeenCalled();
   });
 });

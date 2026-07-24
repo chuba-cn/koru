@@ -6,7 +6,7 @@ import type { Response } from 'express';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AcceptInviteService } from './accept-invite.service';
-import { StaffDto } from './staff.dto';
+import { AcceptInviteResponseDto } from './staff.dto';
 
 @ApiTags('invites')
 @Controller('invites')
@@ -15,8 +15,11 @@ export class AcceptInviteController {
 
   @Post('accept')
   @AllowAnonymous()
-  @ApiOperation({ summary: 'Accept a staff invite, setting a password and activating the account' })
-  @ApiCreatedResponse({ type: StaffDto })
+  @ApiOperation({
+    summary:
+      'Accept a staff invite, setting a password. Returns 201 — the caller must verify their email before signing in.',
+  })
+  @ApiCreatedResponse({ type: AcceptInviteResponseDto })
   @ApiConflictResponse({
     description: 'Already accepted, or the email already has a login',
     type: ErrorResponseDto,

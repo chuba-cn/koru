@@ -3,7 +3,11 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { createAuthedChurch, createAuthedChurchWithRegion } from './auth-utils';
+import {
+  createAuthedChurch,
+  createAuthedChurchWithRegion,
+  verifyEmailAndGetCookie,
+} from './auth-utils';
 import { truncateAll } from './db-utils';
 
 async function createBranch(
@@ -20,15 +24,12 @@ async function createBranch(
   return res.body as { id: string };
 }
 
-async function acceptInviteAndGetCookie(app: INestApplication, token: string) {
-  const accept = await request(app.getHttpServer())
+async function acceptInviteAndGetCookie(app: INestApplication, token: string, email: string) {
+  await request(app.getHttpServer())
     .post('/invites/accept')
     .send({ token, password: 'correct horse battery' })
     .expect(201);
-
-  const rawCookies = accept.headers['set-cookie'];
-  if (!rawCookies) throw new Error('Accepting the invite did not set a session cookie');
-  return Array.isArray(rawCookies) ? rawCookies.join('; ') : String(rawCookies);
+  return verifyEmailAndGetCookie(app, email);
 }
 
 describe('Staff (e2e)', () => {
@@ -335,7 +336,11 @@ describe('Staff (e2e)', () => {
       .set('Cookie', alice.cookie)
       .send({ fullName: 'Bob Second', email: 'bob-race@example.test', role: 'super_admin' })
       .expect(201);
-    const bobCookie = await acceptInviteAndGetCookie(app, bobStaff.body.invite.token);
+    const bobCookie = await acceptInviteAndGetCookie(
+      app,
+      bobStaff.body.invite.token,
+      bobStaff.body.email,
+    );
 
     const [aliceDemotesBob, bobDemotesAlice] = await Promise.all([
       request(app.getHttpServer())
@@ -368,7 +373,11 @@ describe('Staff (e2e)', () => {
       .set('Cookie', alice.cookie)
       .send({ fullName: 'Bob Second', email: 'bob-delete-race@example.test', role: 'super_admin' })
       .expect(201);
-    const bobCookie = await acceptInviteAndGetCookie(app, bobStaff.body.invite.token);
+    const bobCookie = await acceptInviteAndGetCookie(
+      app,
+      bobStaff.body.invite.token,
+      bobStaff.body.email,
+    );
 
     const [aliceDeletesBob, bobDeletesAlice] = await Promise.all([
       request(app.getHttpServer())

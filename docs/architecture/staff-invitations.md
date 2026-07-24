@@ -157,15 +157,16 @@ sequenceDiagram
         AS-->>User: 409 "already has a login"
     end
     AS->>BA: signUpEmail(name, email, password)
-    Note over BA: creates user, hashes password,<br/>starts a session
-    BA-->>AS: user + session cookie
+    Note over BA: creates user, hashes password.<br/>requireEmailVerification is on —<br/>no session yet, a verification<br/>email is sent
+    BA-->>AS: user, no cookie
+    AS->>AS: findByEmail again — confirm the<br/>returned id is real, not a<br/>synthetic anti-enumeration user
     AS->>DB: UPDATE Staff SET userId
     Note over DB: status flips to "active"
     AS->>DB: UPDATE StaffInvite SET acceptedAt
     Note over DB: token is now spent
-    AS-->>Ctrl: staff + cookies
-    Ctrl-->>User: 201 + Set-Cookie
-    Note over User: Logged in immediately
+    AS-->>Ctrl: staff (emailVerificationRequired: true) + []
+    Ctrl-->>User: 201, no Set-Cookie
+    Note over User: Must open the verification<br/>email and click through<br/>before they can sign in
 ```
 
 ### Why this endpoint is public
@@ -176,11 +177,13 @@ But this person has **no session and no staff link** — obtaining them is the e
 
 **The token is the credential here**, which is exactly what an invite is.
 
-### Why Better Auth creates the login
+### Why Better Auth creates the login — and why it no longer logs you in
 
 [`accept-invite.service.ts:20`](../../apps/api/src/staff/accept-invite.service.ts) hands the password to `auth.api.signUpEmail` rather than hashing it ourselves. Password hashing and session creation are precisely what we adopted Better Auth to avoid hand-rolling ([ADR-0009](../../apps/api/docs/adr/0009-better-auth-over-workos-and-handrolled.md)).
 
-`asResponse: true` makes it hand back a full HTTP response including the session cookie, which the controller forwards. That is why accepting logs you straight in, instead of dropping you on a login page to retype the password you chose ten seconds earlier.
+`asResponse: true` still hands back a full HTTP response, and the controller still forwards whatever `getSetCookie()` returns — but since #59 that's always an empty array. Setting `emailAndPassword.requireEmailVerification: true` makes Better Auth skip auto-sign-in for **every** sign-up, not only this one (`shouldSkipAutoSignIn`, `dist/api/routes/sign-up.mjs`), so the invitee now has to open the verification email Better Auth sends on their behalf and follow its link before `/api/auth/sign-in/email` will accept their new password at all.
+
+**A second, unrelated effect of the same flag matters here too.** Before #59, a sign-up against an email that already had a login threw `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL`, which the old post-call `emailTaken` regex fallback caught. `requireEmailVerification: true` changes that: Better Auth now returns `200` with a fabricated, never-persisted user object instead — an anti-enumeration measure that also defeats that fallback for the raced case. `AcceptInviteService.accept` closes this by calling `authUsers.findByEmail` a second time after the "successful" sign-up and rejecting with the same `EMAIL_TAKEN_MESSAGE` if the id doesn't match a real, persisted user.
 
 ---
 

@@ -6,7 +6,9 @@ import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { openAPI, phoneNumber } from 'better-auth/plugins';
 import { requireEnv, requireEnvPairOrNone, requireOriginList } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
+import { mailSender } from '../notifications/mail-sender';
 import { smsSender } from '../notifications/sms-sender';
+import { resetPasswordEmailHtml, verificationEmailHtml } from './auth-email-templates';
 
 export const SESSION_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 30;
 export const SESSION_UPDATE_AGE_SECONDS = 60 * 60 * 24;
@@ -43,6 +45,19 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 8,
+    requireEmailVerification: true,
+    sendResetPassword: async ({ user, url }) => {
+      await mailSender.send(user.email, 'Reset your Koru password', resetPasswordEmailHtml(url));
+    },
+    /** Explicit, not Better Auth's default, to keep the lifetime a decision on record. */
+    resetPasswordTokenExpiresIn: 60 * 60,
+  },
+  emailVerification: {
+    sendVerificationEmail: async ({ user, url }) => {
+      await mailSender.send(user.email, 'Verify your email', verificationEmailHtml(url));
+    },
+    sendOnSignUp: true,
+    autoSignInAfterVerification: true,
   },
   socialProviders,
   session: {

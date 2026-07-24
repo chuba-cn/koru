@@ -195,23 +195,26 @@ requiring an actual round-trip to Redis — the only way this endpoint can tell 
   talks to over the standard protocol, the same exception already carved out for Paystack and
   Resend, not a reopening of that rule.
 
-## `renderedHtml` has no retention limit — auth emails must redact before logging
+## Auth emails (verification, password reset) never reach `EmailLog` at all
 
-`EmailLog` rows are never purged. That's fine for a welcome email or a payment confirmation — there
-is nothing in that HTML worth protecting once it's been sent. It is **not** fine for the two
-auth-shaped categories, `auth_verification` and `auth_password_reset` (#59, #60): the real HTML
-Better Auth builds for those contains a live, single-use token or magic-link URL. Logging that
-verbatim means the token stays readable in Postgres to anyone with DB access for as long as the row
-exists — which today is forever, since #76 (the only thing resembling cleanup in this system) is
-about re-enqueuing stuck jobs, not purging old ones.
+`auth.ts` loads outside Nest's DI container by design (see its own top-of-file comment), so it
+cannot inject `MailService`, which needs both `@InjectQueue` and `PrismaService`. #59/#60 wire
+`emailVerification.sendVerificationEmail` and `emailAndPassword.sendResetPassword` to call
+`mailSender.send(...)` directly instead — the same precedent this file's own OTP sending already
+set for `smsSender`.
 
-**Whoever builds #59/#60 must redact the token/link before the row is ever written** — store a
-placeholder in `renderedHtml` for these two categories, not the real content. This doesn't cost
-anything functionally: a stale auth email is useless to replay anyway, since its token is single-use
-and short-lived — #68's resend action for these two categories will always need a freshly generated
-link, never a replay of stored HTML the way a welcome email's resend can be. This constraint is
-recorded on the `EmailLog.renderedHtml` field itself in `schema.prisma`, and as blocking acceptance
-criteria on #59 and #60, precisely so it can't be missed when those tickets are picked up.
+One consequence worth being explicit about: these two email types get none of the durability this
+whole system exists to provide. No `EmailLog` row, no retry on a transient provider failure, no
+delivery tracking, no staff-visible record that a verification email was ever sent. That trade was
+made deliberately — building a parallel raw-Queue-plus-Prisma path solely for two hook-driven email
+types that `auth.ts` can't reach `MailService` from was judged not worth the duplication at this
+stage — but it means a lost verification or reset email today has no resend button and leaves no
+trace it ever tried to go out.
+
+This is also why `EmailCategory` has no `auth_verification`/`auth_password_reset` values: a category
+that can never produce a row would be dead schema. The retention/redaction question this section
+used to raise (a live token sitting forever in a never-purged `renderedHtml` column) doesn't arise
+either, for the same reason — there is no row.
 
 ## Deliberately not built
 

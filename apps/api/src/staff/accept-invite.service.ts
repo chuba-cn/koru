@@ -62,6 +62,11 @@ export class AcceptInviteService {
 
     const { user } = (await response.json()) as { user: { id: string } };
 
+    const realUser = await this.authUsers.findByEmail(staff.email);
+    if (!realUser || realUser.id !== user.id) {
+      throw new ConflictException(EMAIL_TAKEN_MESSAGE);
+    }
+
     const [linked] = await this.prisma.$transaction([
       this.prisma.staff.update({
         where: { id: staff.id },
@@ -76,7 +81,7 @@ export class AcceptInviteService {
     ]);
 
     return {
-      staff: { ...linked, status: 'active' as const },
+      staff: { ...linked, status: 'active' as const, emailVerificationRequired: true as const },
       cookies: response.headers.getSetCookie(),
     };
   }

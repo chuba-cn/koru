@@ -87,7 +87,7 @@ describe('Invite email squatting (e2e)', () => {
       .expect(201);
 
     expect(accepted.body.status).toBe('active');
-    expect(String(accepted.headers['set-cookie'])).toContain('session_token');
+    expect(accepted.headers['set-cookie']).toBeUndefined();
 
     const linked = await prisma.staff.findFirstOrThrow({ where: { email: VICTIM } });
     expect(linked.userId).toBeTruthy();
