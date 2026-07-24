@@ -114,8 +114,11 @@ stateDiagram-v2
     [*] --> queued: MailService.send
     queued --> Attempting: EmailProcessor picks up the job
 
-    Attempting --> sent: mailSender.send succeeds
+    Attempting --> RecordingSent: mailSender.send succeeds
     Attempting --> RetryCheck: mailSender.send throws
+
+    RecordingSent --> sent: EmailLog update succeeds
+    RecordingSent --> queued: EmailLog update itself fails —<br/>job still completes, nothing retries it,<br/>row is now indistinguishable from "still trying"
 
     RetryCheck --> queued: attempts remain<br/>(BullMQ retries automatically)
     RetryCheck --> failed: this was the last attempt
@@ -123,6 +126,14 @@ stateDiagram-v2
     sent --> [*]
     failed --> [*]: staff can manually resend (#68)
 ```
+
+**A row at `queued` can now mean one of two different things, and nothing today tells them apart.**
+Either it's genuinely still being attempted (retries remaining, or the job hasn't been picked up
+yet), or the send already succeeded and the follow-up write that would have flipped it to `sent`
+failed — in which case the job is done, BullMQ will never touch it again, and only #76's
+reconciliation sweep (not yet built) can ever notice and correct it. This second path never reaches
+`failed`, on purpose — see the "delivery vs. outcome persistence" reasoning below — but that means a
+`queued` row is no longer proof that something is still in flight.
 
 Defaults, set once in `QueueModule`, not repeated per-job: **5 attempts, exponential backoff at a
 10s base** (10s / 20s / 40s / 80s between attempts — about 2.5 minutes total before giving up). Long
@@ -183,6 +194,24 @@ requiring an actual round-trip to Redis — the only way this endpoint can tell 
 - ADR-0002 (self-managed, no BaaS lock-in) — a managed Redis add-on in production is a pipe KORU
   talks to over the standard protocol, the same exception already carved out for Paystack and
   Resend, not a reopening of that rule.
+
+## `renderedHtml` has no retention limit — auth emails must redact before logging
+
+`EmailLog` rows are never purged. That's fine for a welcome email or a payment confirmation — there
+is nothing in that HTML worth protecting once it's been sent. It is **not** fine for the two
+auth-shaped categories, `auth_verification` and `auth_password_reset` (#59, #60): the real HTML
+Better Auth builds for those contains a live, single-use token or magic-link URL. Logging that
+verbatim means the token stays readable in Postgres to anyone with DB access for as long as the row
+exists — which today is forever, since #76 (the only thing resembling cleanup in this system) is
+about re-enqueuing stuck jobs, not purging old ones.
+
+**Whoever builds #59/#60 must redact the token/link before the row is ever written** — store a
+placeholder in `renderedHtml` for these two categories, not the real content. This doesn't cost
+anything functionally: a stale auth email is useless to replay anyway, since its token is single-use
+and short-lived — #68's resend action for these two categories will always need a freshly generated
+link, never a replay of stored HTML the way a welcome email's resend can be. This constraint is
+recorded on the `EmailLog.renderedHtml` field itself in `schema.prisma`, and as blocking acceptance
+criteria on #59 and #60, precisely so it can't be missed when those tickets are picked up.
 
 ## Deliberately not built
 
