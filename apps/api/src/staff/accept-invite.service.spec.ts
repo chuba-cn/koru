@@ -149,4 +149,18 @@ describe('AcceptInviteService.accept', () => {
     );
     expect(prisma.staff.update).not.toHaveBeenCalled();
   });
+
+  it('rejects when the post-signup lookup finds no real user at all, not just a mismatched id', async () => {
+    const { service, prisma } = build({ postSignupUser: null });
+    signUpEmail.mockResolvedValue({
+      ok: true,
+      headers: { getSetCookie: () => [] },
+      json: () => Promise.resolve({ user: { id: 'synthetic-fabricated-id' } }),
+    });
+
+    await expect(service.accept({ token: 'raw', password: 'secret123' })).rejects.toThrow(
+      EMAIL_TAKEN_MESSAGE,
+    );
+    expect(prisma.staff.update).not.toHaveBeenCalled();
+  });
 });

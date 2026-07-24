@@ -2,20 +2,12 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { mailSender } from '../src/notifications/mail-sender';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { getLastEmailLink } from './auth-utils';
 import { truncateAll } from './db-utils';
 
 const EMAIL = 'kemi@example.test';
 const PASSWORD = 'correct horse battery';
-
-function linkFor(email: string) {
-  const sent = mailSender.lastSentTo?.(email);
-  if (!sent) throw new Error(`No email captured for ${email}`);
-  const href = sent.html.match(/href="([^"]+)"/)?.[1];
-  if (!href) throw new Error('Email had no link');
-  return new URL(href);
-}
 
 describe('Email verification and password reset (e2e)', () => {
   let app: INestApplication;
@@ -42,7 +34,7 @@ describe('Email verification and password reset (e2e)', () => {
       .send({ name: 'Kemi', email: EMAIL, password: PASSWORD })
       .expect(200);
 
-    const url = linkFor(EMAIL);
+    const url = getLastEmailLink(EMAIL);
     expect(url.pathname).toBe('/api/auth/verify-email');
     expect(url.searchParams.get('token')).toBeTruthy();
 
@@ -84,7 +76,7 @@ describe('Email verification and password reset (e2e)', () => {
 
     expect(known.body).toEqual(unknown.body);
 
-    const url = linkFor(EMAIL);
+    const url = getLastEmailLink(EMAIL);
     // Better Auth's own link is the GET redirect-callback route, not the POST
     // endpoint we call below — confirmed in dist/api/routes/password.mjs:
     // `${baseURL}/reset-password/${token}?callbackURL=${callbackURL}`. The

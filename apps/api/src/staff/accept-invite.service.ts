@@ -82,7 +82,10 @@ export class AcceptInviteService {
 
     return {
       staff: { ...linked, status: 'active' as const, emailVerificationRequired: true as const },
-      cookies: response.headers.getSetCookie(),
+      // Never forward Better Auth's own Set-Cookie here, even though it's empty today —
+      // accepting an invite must never hand back a session before the email is verified,
+      // and that contract shouldn't depend on requireEmailVerification staying configured.
+      cookies: [] as string[],
     };
   }
 }

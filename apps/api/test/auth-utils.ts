@@ -20,6 +20,17 @@ type Options = {
   regionState?: string;
 };
 
+/** The last email ConsoleMailSender captured for `email`, as the link it contains. */
+export function getLastEmailLink(email: string): URL {
+  const sent = mailSender.lastSentTo?.(email);
+  if (!sent) throw new Error(`No email captured for ${email}`);
+
+  const href = sent.html.match(/href="([^"]+)"/)?.[1];
+  if (!href) throw new Error('Email had no link to follow');
+
+  return new URL(href);
+}
+
 /**
  * Reads the verification link ConsoleMailSender captured for `email`, follows it,
  * and returns the resulting session cookie. Needed everywhere a test used to type cookies
@@ -30,13 +41,7 @@ export async function verifyEmailAndGetCookie(
   app: INestApplication,
   email: string,
 ): Promise<string> {
-  const sent = mailSender.lastSentTo?.(email);
-  if (!sent) throw new Error(`No verification email captured for ${email}`);
-
-  const href = sent.html.match(/href="([^"]+)"/)?.[1];
-  if (!href) throw new Error('Verification email had no link to follow');
-
-  const url = new URL(href);
+  const url = getLastEmailLink(email);
   const res = await request(app.getHttpServer())
     .get(url.pathname)
     .query(Object.fromEntries(url.searchParams))
