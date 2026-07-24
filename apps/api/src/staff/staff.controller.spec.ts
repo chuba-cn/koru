@@ -33,6 +33,7 @@ describe('StaffController wiring', () => {
     'reissueInvite',
     'revokeInvite',
     'remove',
+    'linkLogin',
   ] as const)('widens %s to the three admin-tier roles, overriding the class-level super_admin-only list', (method) => {
     expect(reflector.get(STAFF_ROLES_KEY, StaffController.prototype[method])).toEqual([
       'super_admin',
@@ -41,8 +42,8 @@ describe('StaffController wiring', () => {
     ]);
   });
 
-  it('leaves reclaimLogin on the class-level super_admin-only list', () => {
-    expect(reflector.get(STAFF_ROLES_KEY, StaffController.prototype.reclaimLogin)).toBeUndefined();
+  it('leaves clearLogin on the class-level super_admin-only list, unlike linkLogin', () => {
+    expect(reflector.get(STAFF_ROLES_KEY, StaffController.prototype.clearLogin)).toBeUndefined();
   });
 });
 

@@ -37,7 +37,11 @@ a controller's decorator list happened to admit.
 `regional_admin` and `branch_admin` can now create, update, remove, and manage the invites of
 staff too, each capped at their own tier and confined to their own scope — see
 [Delegated staff management](../../../docs/architecture/delegated-staff-management.md)
-(koru-app/koru#49). The one exception is login-reclaim, which stays `super_admin`-only per
-ADR-0012's own reasoning. This does not change the role/tier lines drawn above; it changes who may
+(koru-app/koru#49). This now includes `link-login` (koru-app/koru#63), attaching a verified existing
+login to a pending staff record — the same tier/scope rules as re-issuing an invite, since it's a
+third route to the same outcome. The one exception is `clear-login` (koru-app/koru#62, the narrowed
+successor to the retired login-reclaim), which stays `super_admin`-only per ADR-0012's own reasoning:
+deleting another person's account is irreversible and reaches outside the tenant's own data, unlike
+attaching a `userId` column. This does not change the role/tier lines drawn above; it changes who may
 exercise the "admin-tier" staff-management capability that was previously reserved for
 `super_admin` by omission rather than by design.

@@ -88,6 +88,10 @@ export const AcceptInviteSchema = z.object({
     .max(128, 'Password must be at most 128 characters'),
 });
 
+export const LinkLoginSchema = z.object({
+  email: z.email().max(160),
+});
+
 export type StaffInvite = z.infer<typeof StaffInviteSchema>;
 export type StaffWithInvite = z.infer<typeof StaffWithInviteSchema>;
 export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponseSchema>;
@@ -97,3 +101,4 @@ export type CreateStaffInput = z.infer<typeof CreateStaffSchema>;
 export type UpdateStaffInput = z.infer<typeof UpdateStaffSchema>;
 export type ReplaceScopesInput = z.infer<typeof ReplaceScopesSchema>;
 export type Staff = z.infer<typeof StaffSchema>;
+export type LinkLoginInput = z.infer<typeof LinkLoginSchema>;

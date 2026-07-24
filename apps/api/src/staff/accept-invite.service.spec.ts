@@ -1,6 +1,11 @@
 import { ConflictException, InternalServerErrorException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
-import { AcceptInviteService, EMAIL_TAKEN_MESSAGE } from './accept-invite.service';
+import {
+  AcceptInviteService,
+  EMAIL_TAKEN_MESSAGE,
+  EMAIL_TAKEN_UNVERIFIED_MESSAGE,
+  EMAIL_TAKEN_VERIFIED_MESSAGE,
+} from './accept-invite.service';
 
 const { signUpEmail } = vi.hoisted(() => ({ signUpEmail: vi.fn() }));
 
@@ -69,11 +74,25 @@ describe('AcceptInviteService.accept', () => {
     expect(signUpEmail).not.toHaveBeenCalled();
   });
 
-  it('rejects when the staff email already has a login elsewhere, which is the squatting guard', async () => {
-    const { service, invites } = build({ existingLogin: { id: 'squatter' } });
+  it('rejects with the verified-collision message when the existing login has proven its email', async () => {
+    const { service, invites } = build({
+      existingLogin: { id: 'someone', emailVerified: true },
+    });
 
     await expect(service.accept({ token: 'raw', password: 'secret123' })).rejects.toThrow(
-      EMAIL_TAKEN_MESSAGE,
+      EMAIL_TAKEN_VERIFIED_MESSAGE,
+    );
+    expect(invites.claim).not.toHaveBeenCalled();
+    expect(signUpEmail).not.toHaveBeenCalled();
+  });
+
+  it('rejects with the unverified-collision message when the existing login is an unproven squatter', async () => {
+    const { service, invites } = build({
+      existingLogin: { id: 'squatter', emailVerified: false },
+    });
+
+    await expect(service.accept({ token: 'raw', password: 'secret123' })).rejects.toThrow(
+      EMAIL_TAKEN_UNVERIFIED_MESSAGE,
     );
     expect(invites.claim).not.toHaveBeenCalled();
     expect(signUpEmail).not.toHaveBeenCalled();

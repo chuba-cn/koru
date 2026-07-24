@@ -67,10 +67,18 @@ _Avoid_: Notification (too broad — an Email Log is specifically the record of 
 
 **Orphan Login**:
 A Better Auth `user` that no `Staff` and no `Member` points at. It holds an email address but owns
-no KORU data, so it can be reclaimed by a super_admin (ADR-0012).
+no KORU data. Historical term from before email verification (ADR-0012) — the check for "owns
+nothing" still exists, inside Clear.
 _Avoid_: Ghost account, Unclaimed user
 
-**Reclaim**:
-A super_admin deleting an Orphan Login that holds one of their staff members' email addresses, so
-that person can be onboarded. Deliberately not automatic.
-_Avoid_: Release, Free, Take over
+**Link** (staff onboarding):
+A super_admin or delegated admin attaching an existing, **verified** Better Auth login to a pending
+`Staff` record, instead of the person accepting an invite token. Safe because the tenant is vouching
+for an identity it can actually check (ADR-0012 amendment).
+_Avoid_: Reclaim, Attach, Merge
+
+**Clear** (staff onboarding):
+A super_admin deleting an **unverified** login squatting on a staff member's email address, then
+issuing a fresh invite. The narrowed, grace-period-free successor to the old Reclaim mechanism —
+`emailVerified` replaces the time-based guess Reclaim used to make.
+_Avoid_: Reclaim, Release, Free, Take over

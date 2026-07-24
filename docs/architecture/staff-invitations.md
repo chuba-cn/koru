@@ -1,37 +1,41 @@
 # Staff invitations
 
-How a super admin adds a colleague to their church, before any email infrastructure exists.
+How a super admin adds a colleague to their church.
 
 Part of the [architecture map](../architecture.md).
 
-The short version: creating a staff member also mints a **single-use token**. The super admin sees that token exactly once and passes it on by hand, over WhatsApp or in person. Accepting it gives that person a real login and switches their staff record on.
+The short version: creating a staff member also mints a **single-use token** and, since #61, **sends
+it by email** — the raw token still comes back in the API response too, and that response is the
+documented fallback for a super admin to pass it on by hand when email isn't working. Accepting the
+invite gives that person a real login and switches their staff record on.
 
 ---
 
 ## The cast
 
-Five files, each with one job.
-
 | File | Its one job |
 |---|---|
-| [`staff.controller.ts`](../../apps/api/src/staff/staff.controller.ts) | The front door for super admins. Checks who you are, then delegates. |
-| [`staff.service.ts`](../../apps/api/src/staff/staff.service.ts) | Church rules. Creates the staff record, decides pending vs active. |
+| [`staff.controller.ts`](../../apps/api/src/staff/staff.controller.ts) | The front door for super admins and delegated admins. Checks who you are, then delegates. |
+| [`staff.service.ts`](../../apps/api/src/staff/staff.service.ts) | Church rules. Creates the staff record, decides pending vs active, sends the invite email, and — since #62/#63 — resolves a collision with an existing login. |
 | [`staff-invite.service.ts`](../../apps/api/src/staff/staff-invite.service.ts) | The token expert. Mints them, hashes them, decides if one is still good. |
+| [`invite-email-template.ts`](../../apps/api/src/staff/invite-email-template.ts) | The one email template this module owns. |
 | [`accept-invite.controller.ts`](../../apps/api/src/staff/accept-invite.controller.ts) | A separate **public** front door, for the invited person. |
 | [`accept-invite.service.ts`](../../apps/api/src/staff/accept-invite.service.ts) | Turns an accepted invite into a real login. |
 
 ```mermaid
 graph TB
-    SC["staff.controller<br/><i>super admin only</i>"]
+    SC["staff.controller<br/><i>super admin + delegated admins</i>"]
     AC["accept-invite.controller<br/><i>public</i>"]
     SS["staff.service"]
     AS["accept-invite.service"]
     IS["<b>staff-invite.service</b><br/>no controller of its own"]
     BA["Better Auth<br/>auth.api.signUpEmail"]
+    MS["MailService<br/>queued, EmailLog-backed"]
 
     SC --> SS
     AC --> AS
     SS --> IS
+    SS --> MS
     AS --> IS
     AS --> BA
 
@@ -39,6 +43,8 @@ graph TB
 ```
 
 Note that **`staff-invite.service.ts` has no controller.** It never talks to the outside world directly. Both journeys reach it through another service, which is why all the token rules stay in one place.
+
+**Why `staff.service.ts` uses `MailService`, not the direct `mailSender` singleton `auth.ts` uses for its own emails:** `StaffService` is an ordinary Nest provider inside the DI container, so it can inject `MailService` and get the durable, retried, `EmailLog`-audited send path — unlike `auth.ts`, which sits deliberately outside Nest's DI and has no choice but to call `mailSender` directly (see [`email-queue-and-logging.md`](email-queue-and-logging.md)). There is no architectural reason for this module to bypass the queue.
 
 ---
 
@@ -51,10 +57,11 @@ sequenceDiagram
     participant Ctrl as staff.controller
     participant Svc as staff.service
     participant Inv as staff-invite.service
+    participant Mail as MailService
     participant DB as Postgres
 
     Admin->>Guards: POST /churches/{id}/staff
-    Note over Guards: AuthGuard → TenantGuard → RolesGuard<br/>logged in? your church? super_admin?
+    Note over Guards: AuthGuard → TenantGuard → RolesGuard<br/>logged in? your church? role/scope ok?
     Guards->>Ctrl: all three pass
     Ctrl->>Svc: create(churchId, body)
     Svc->>DB: does the church exist?
@@ -65,17 +72,22 @@ sequenceDiagram
     Inv->>Inv: randomBytes(32) → raw token
     Inv->>DB: INSERT StaffInvite (hash only)
     Inv-->>Svc: { token, expiresAt }
+    Svc->>Mail: send(invite link containing the token)
+    Note over Mail: never allowed to fail<br/>the mutation — logged<br/>and swallowed on error
     Svc-->>Admin: staff + invite token
-    Note over Admin: The ONLY time the raw<br/>token is ever visible
+    Note over Admin: The token is ALSO in<br/>the response — the<br/>documented fallback
 ```
 
 **Step by step, with the code:**
 
-1. The three guards run before any of our code, because they sit on the controller class at [`staff.controller.ts:37-38`](../../apps/api/src/staff/staff.controller.ts). That is why there is no permission check inside `create` itself.
+1. The guards run before any of our code, because they sit on the controller class at [`staff.controller.ts`](../../apps/api/src/staff/staff.controller.ts). That is why there is no permission check inside `create` itself — though `create` and every route that manages an *existing* staff member (`update`, `remove`, `reissueInvite`, `linkLogin`, and so on) also call `assertCanManageStaff`/`assertCanCreateStaff`, which check the caller's authority over *this specific target*, not just their role in general (see the [staff authority model](delegated-staff-management.md)).
 2. `StaffService.create` checks the church exists and the scopes belong to it.
 3. The `Staff` row is inserted with **`userId` left empty**. Nothing links this person to a login yet, and filling that gap is what the whole invite system exists to do.
 4. `StaffInviteService.issue` mints the token and stores only its hash.
-5. The raw token comes back in the response, once.
+5. `StaffService` sends the invite email through `MailService`, containing a link with the raw token. If the send throws — a down provider, a database hiccup on the `EmailLog` write — it's caught, logged, and swallowed; the mutation that already succeeded is never rolled back for a reason as unrelated as a mail failure.
+6. The raw token also comes back in the response, unconditionally, once. Email is the primary channel now; the response is the fallback for a member/staff address that doesn't work.
+
+`reissueInvite` follows the same shape — mint a fresh token, send a fresh email, still return the token — for exactly the case email can't reach: a wrong number, a typo'd address, or someone who never got the first one.
 
 ### Where `status` comes from
 
@@ -189,24 +201,61 @@ But this person has **no session and no staff link** — obtaining them is the e
 
 ## When the email is already taken
 
-Because signup is public and unverified, anyone can create a login holding a staff member's email before that person accepts. Left alone, that locks them out permanently, since `signUpEmail` refuses a duplicate.
+Anyone can create a login holding a staff member's email before that person accepts — self-serve
+church founding and member sign-up are both public. Before #59, an unverified email proved nothing
+about who controlled it, so the only defensible recovery was reclaim: an authenticated super_admin
+deleting a login that owned nothing, after a grace period protecting a bystander mid-signup. **#59
+made `emailVerified` a real, checkable fact, and that changes which recovery is actually correct** —
+reclaim (ADR-0012) is retired, replaced by two routes that ask a different question first: is the
+colliding login *proven*, or not?
 
 ```mermaid
 flowchart TD
     A["accept() pre-flight"] --> B{"Does a login already<br/>hold this email?"}
     B -->|no| C["claim the token,<br/>provision, link"]
-    B -->|yes| D["409 — ask an admin to reclaim"]
+    B -->|yes| V{"Is that login's<br/>email verified?"}
 
-    D --> E["super_admin calls<br/>POST /staff/{id}/invite/reclaim"]
-    E --> F{"Does that login own<br/>a Staff or Member?"}
-    F -->|yes| G["409 — refuse, it is a real person"]
-    F -->|no| H{"Created less than<br/>an hour ago?"}
-    H -->|yes| I["409 — may be a founder mid-signup"]
-    H -->|no| J["delete the Orphan Login,<br/>issue a fresh invite"]
-    J --> C
+    V -->|yes| D1["409 — ask an admin<br/>to link that login"]
+    V -->|no| D2["409 — ask an admin<br/>to clear it"]
+
+    D1 --> E1["super_admin OR delegated admin<br/>within their scope calls<br/>POST /staff/{id}/link-login"]
+    E1 --> F1{"Login verified, matches<br/>this staff email, and<br/>not already staff anywhere?"}
+    F1 -->|yes| G1["attach userId,<br/>revoke the invite —<br/>staff is now active"]
+    F1 -->|no| H1["409 — names which<br/>check failed"]
+
+    D2 --> E2["super_admin calls<br/>POST /staff/{id}/invite/clear-login"]
+    E2 --> F2{"Does that login own<br/>a Staff or Member?"}
+    F2 -->|yes| G2["409 — refuse, it is a real person"]
+    F2 -->|no| H2["delete the login,<br/>issue a fresh invite"]
+    H2 --> C
 ```
 
-Three guards make deleting someone's login defensible: it must own nothing, it must be older than the grace period, and the caller must be an authenticated super_admin of that church. **Linking the existing login instead would be privilege escalation** — an unverified email proves nothing about who controls it, so that would hand the squatter a finance-role account whose password they chose. See [ADR-0012](../../apps/api/docs/adr/0012-unverified-email-reserves-nothing.md).
+**Linking (`POST /staff/{id}/link-login`, #63) — for a proven collision.** A verified login is a real
+person who controls that inbox; attaching it is the tenant vouching for an identity it can actually
+check, the same trust substitution reclaim always relied on, just now grounded in a fact instead of
+an assumption. Guarded by: the staff record must still be pending, the requested email must match it
+exactly, a login must exist for that email and be verified, and that login must not already be staff
+anywhere (`Staff.userId` is `@unique` — a concurrent double-link is caught by the database itself, not
+just a pre-check). Open to the same roles that can create or re-issue an invite for this staff member
+— a `regional_admin` who could onboard someone by invite can equally onboard them by linking; only
+`clear-login` below stays super_admin-only.
+
+**Clearing (`POST /staff/{id}/invite/clear-login`, #62) — for an unproven one.** An unverified login
+is still, by ADR-0012's original reasoning, not provably anyone — deleting it and re-inviting is
+correct. What changed from reclaim: the one-hour grace period is gone, because `emailVerified` now
+answers the question the grace period could only approximate. It cannot own a Staff or Member row
+through any normal signup path once verification gates sign-in, but the check that it owns nothing
+stays load-bearing regardless — the phone-number OTP path can still create an unverified login that
+owns real data (a synthetic `@members.koru.invalid` email, never a real staff address, but the guard
+doesn't assume that and checks directly). This route stays super_admin-only: deleting another
+person's Better Auth account, even an unverified one, is irreversible and reaches outside the
+tenant's own data.
+
+**Linking is never available for an unverified login, at either route.** That's ADR-0012's core rule,
+unchanged: a matching-but-unverified address proves nothing, so linking it would still be privilege
+escalation, whether attempted through the public accept path or through an authenticated admin route.
+See [ADR-0012](../../apps/api/docs/adr/0012-unverified-email-reserves-nothing.md), amended for #62/#63
+with the reasoning above and a historical record of what reclaim used to do.
 
 ## The gatekeeper: one function, four questions
 
@@ -330,9 +379,14 @@ stateDiagram-v2
 - [ADR-0009](../../apps/api/docs/adr/0009-better-auth-over-workos-and-handrolled.md) — why Better Auth handles the password
 - [ADR-0010](../../apps/api/docs/adr/0010-better-auth-boundary-and-identity.md) — why the invite lives in our table and not Better Auth's
 - [ADR-0011](../../apps/api/docs/adr/0011-tenant-crossing-403-not-404.md) — why re-issuing across churches gives 404, not 403
+- [ADR-0012](../../apps/api/docs/adr/0012-unverified-email-reserves-nothing.md) — why an unverified email reserves nothing, and (amended) why verification changes what's safe
 
 ## Deliberately not built
 
 **Accepting with Google.** The invitee has no session, so Better Auth's `/link-social` is unavailable to them — it requires one. Supporting it would mean carrying the invite token through Google's OAuth round trip inside the `state` parameter, which is real complexity in the most security-sensitive path we have.
 
 It is unnecessary, because the journey already works: accept with a password, which gives you a session, then use `POST /api/auth/link-social` to connect Google and sign in with it from then on. One extra step, once, and no new code.
+
+**Self-service linking.** `link-login` is super_admin/delegated-admin-initiated only — a Member cannot link their own existing login to become staff themselves. The admin who already knows this is the right person is the one vouching for the identity; a self-service version would need its own, separate proof of who is asking.
+
+**Relaxing `Staff.userId`'s uniqueness.** A login that is already staff anywhere is refused by `link-login`, even at a different church. Multi-church staff is a real scenario for a denomination with several branches under one login, but it's a separate product question (#36), not solved by loosening this constraint incidentally.
