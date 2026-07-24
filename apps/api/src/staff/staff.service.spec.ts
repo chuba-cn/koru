@@ -165,10 +165,17 @@ describe('StaffService — invite email delivery (#61)', () => {
       scopes: [],
     } as never);
 
-    const html = mail.send.mock.calls[0][0].html as string;
-    expect(html).not.toContain('<img');
-    expect(html).not.toContain('<a href="https://evil.example">');
-    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(mail.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        html: expect.stringContaining('&lt;img src=x onerror=alert(1)&gt;'),
+      }),
+    );
+    expect(mail.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({ html: expect.stringContaining('<img') }),
+    );
+    expect(mail.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({ html: expect.stringContaining('<a href="https://evil.example">') }),
+    );
   });
 
   it('create() still returns the token when the mail send fails', async () => {
