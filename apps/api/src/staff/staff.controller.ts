@@ -85,7 +85,7 @@ export class StaffController {
   @ApiOperation({
     summary: 'List staff of a church, including their scopes',
     description:
-      'A delegated admin (regional_admin/branch_admin) sees only staff they could manage — their own tier or below, within their own scope. super_admin sees everyone. Cursor paginated, ordered by full name (id as tiebreaker). Pass "endCursor" with "direction=forward" for Next, or "startCursor" with "direction=backward" for previous',
+      'A delegated admin (regional_admin/branch_admin) sees only staff they could manage — their own tier or below, within their own scope. super_admin sees everyone. Cursor paginated, ordered by full name (id as tiebreaker). Send the response "endCursor" value as "cursor" with "direction=forward" for Next, or the response "startCursor" value as "cursor" with "direction=backward" for previous',
   })
   @ApiOkResponse({ type: StaffPageDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })

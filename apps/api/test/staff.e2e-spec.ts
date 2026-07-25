@@ -312,10 +312,6 @@ describe('Staff (e2e)', () => {
       .set('Cookie', cookie)
       .expect(200);
 
-    // Amaka, Bola, Chidi alphabetically, plus the super_admin seeded by
-    // createAuthedChurchWithRegion — assert on the three we control by name.
-    const firstNames = first.body.items.map((s: { fullName: string }) => s.fullName);
-    expect(firstNames.indexOf('Amaka Obi')).toBeLessThan(firstNames.indexOf('Bola Obi'));
     expect(first.body.hasNextPage).toBe(true);
     expect(first.body.hasPreviousPage).toBe(false);
 
@@ -329,6 +325,17 @@ describe('Staff (e2e)', () => {
     const secondIds = second.body.items.map((s: { id: string }) => s.id);
     expect(secondIds.some((id: string) => firstIds.includes(id))).toBe(false);
     expect(second.body.hasPreviousPage).toBe(true);
+
+    // Which page each name lands on depends on where the seeded super_admin's
+    // name sorts, so order is asserted across both concatenated pages.
+    const walkedNames = [...first.body.items, ...second.body.items].map(
+      (s: { fullName: string }) => s.fullName,
+    );
+    expect(walkedNames.filter((n: string) => n.endsWith(' Obi'))).toEqual([
+      'Amaka Obi',
+      'Bola Obi',
+      'Chidi Obi',
+    ]);
 
     const back = await request(app.getHttpServer())
       .get(`/churches/${churchId}/staff`)
