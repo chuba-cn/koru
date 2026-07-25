@@ -1,4 +1,10 @@
-import { ConflictException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '../generated/prisma/client';
 import { StaffService } from './staff.service';
@@ -43,8 +49,19 @@ function build(overrides: {
       ),
     },
     branch: {
-      findMany: vi.fn(({ where }: { where: { id: { in: string[] } } }) =>
-        Promise.resolve(where.id.in.map((id) => ({ id }))),
+      // Two different callers use this mock with two different where shapes:
+      // assertScopesInChurch looks branches up by id ({ id: { in } }); the new
+      // buildStaffVisibilityWhere resolves a caller's region scopes down to the
+      // branches inside them ({ regionId: { in } }). Each takes a different path.
+      findMany: vi.fn(
+        ({ where }: { where: { id?: { in: string[] }; regionId?: { in: string[] } } }) => {
+          if (where.regionId) {
+            return Promise.resolve(
+              where.regionId.in.map((regionId) => ({ id: `branch-in-${regionId}` })),
+            );
+          }
+          return Promise.resolve((where.id?.in ?? []).map((id) => ({ id })));
+        },
       ),
     },
     staff: {
@@ -64,6 +81,7 @@ function build(overrides: {
         })(),
       ),
       findMany: vi.fn(() => Promise.resolve(overrides.allStaff ?? [])),
+      count: vi.fn(() => Promise.resolve(overrides.allStaff?.length ?? 0)),
       create: vi.fn(({ data }: { data: Record<string, unknown> }) =>
         Promise.resolve({ id: 'new-staff', userId: null, ...data }),
       ),
@@ -731,30 +749,24 @@ describe('StaffService — managing existing staff (update/remove/scopes/invite 
     ).rejects.toThrow(ForbiddenException);
   });
 
-  it('lists only staff a delegated admin can manage, but everyone for super_admin', async () => {
-    const inScope = targetWith(
-      'recorder',
-      [{ scopeType: 'region', scopeRefId: REGION }],
-      'in-scope',
-    );
-    const outOfScope = targetWith(
-      'recorder',
-      [{ scopeType: 'region', scopeRefId: 'someone-elses-region' }],
-      'out-of-scope',
-    );
-    const { service, scopeService } = build({ allStaff: [inScope, outOfScope] });
-    scopeService.scopeCovers.mockImplementation(
-      async (_caller: unknown, scope: { scopeRefId: string }) => scope.scopeRefId === REGION,
-    );
+  // A mocked Prisma client can't apply a `where` clause, so it can't tell
+  // `every` from `some` — that matrix is proven in guard.e2e-spec.ts against
+  // real Postgres. What a mock CAN prove is query count, tested here.
+  it('issues a small, fixed number of queries regardless of how many staff rows exist', async () => {
+    const manyStaff = Array.from({ length: 5000 }, (_, i) => targetWith('recorder', [], `s${i}`));
+    const { service, prisma } = build({ allStaff: manyStaff });
 
-    const asRegionalAdmin = await service.list(
+    await service.list(
       CHURCH,
       callerWith('regional_admin', [{ scopeType: 'region', scopeRefId: REGION }]),
+      { limit: 50, direction: 'forward' },
     );
-    expect(asRegionalAdmin.map((s) => s.id)).toEqual(['in-scope']);
 
-    const asSuperAdmin = await service.list(CHURCH, callerWith('super_admin'));
-    expect(asSuperAdmin.map((s) => s.id)).toEqual(['in-scope', 'out-of-scope']);
+    // branch-resolve (1) + count (1) + the paginated fetch (1) — fixed, not
+    // one query per staff row, which is exactly the N+1 this ticket removes.
+    expect(prisma.branch.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.staff.count).toHaveBeenCalledTimes(1);
+    expect(prisma.staff.findMany).toHaveBeenCalledTimes(1);
   });
 
   it('rejects managing a staff member when only some of their several scopes are covered', async () => {
@@ -772,25 +784,148 @@ describe('StaffService — managing existing staff (update/remove/scopes/invite 
     await expect(service.remove(CHURCH, 'target-1', caller)).rejects.toThrow(ForbiddenException);
   });
 
-  it('excludes a staff member with several scopes, only some covered, from list', async () => {
-    const partiallyCovered = targetWith(
-      'recorder',
-      [
-        { scopeType: 'branch', scopeRefId: BRANCH },
-        { scopeType: 'branch', scopeRefId: 'someone-elses-branch' },
-      ],
-      'partial',
-    );
-    const { service, scopeService } = build({ allStaff: [partiallyCovered] });
-    scopeService.scopeCovers.mockImplementation(
-      async (_caller: unknown, scope: { scopeRefId: string }) => scope.scopeRefId === BRANCH,
-    );
+  it('does not query branch.findMany at all when the caller has no region scope to resolve', async () => {
+    const { service, prisma } = build({ allStaff: [] });
 
-    const visible = await service.list(
+    await service.list(
       CHURCH,
       callerWith('branch_admin', [{ scopeType: 'branch', scopeRefId: BRANCH }]),
+      { limit: 50, direction: 'forward' },
     );
-    expect(visible).toEqual([]);
+
+    // No region scope on this caller, so buildStaffVisibilityWhere never
+    // resolves a region → branches via branch.findMany.
+    expect(prisma.branch.findMany).not.toHaveBeenCalled();
+  });
+
+  describe('StaffService.list — pagination envelope', () => {
+    it('reports hasNextPage and slices off the lookahead row when more rows exist than the limit', async () => {
+      const allStaff = [
+        targetWith('recorder', [], 'a'),
+        targetWith('recorder', [], 'b'),
+        targetWith('recorder', [], 'c'),
+      ];
+      const { service } = build({ allStaff });
+
+      const page = await service.list(CHURCH, callerWith('super_admin'), {
+        limit: 2,
+        direction: 'forward',
+      });
+
+      expect(page.items.map((s) => s.id)).toEqual(['a', 'b']);
+      expect(page.hasNextPage).toBe(true);
+      expect(page.hasPreviousPage).toBe(false);
+      expect(page.startCursor).toBe('a');
+      expect(page.endCursor).toBe('b');
+    });
+
+    it('reports hasNextPage false when exactly limit rows come back, with none left over', async () => {
+      const allStaff = [targetWith('recorder', [], 'a'), targetWith('recorder', [], 'b')];
+      const { service } = build({ allStaff });
+
+      const page = await service.list(CHURCH, callerWith('super_admin'), {
+        limit: 2,
+        direction: 'forward',
+      });
+
+      expect(page.items).toHaveLength(2);
+      expect(page.hasNextPage).toBe(false);
+    });
+
+    it('reverses a backward page back into ascending order, and trusts a validated cursor on both sides', async () => {
+      const allStaff = [
+        targetWith('recorder', [], 'a'),
+        targetWith('recorder', [], 'b'),
+        targetWith('recorder', [], 'c'),
+      ];
+      const { service } = build({ allStaff, staff: { id: 'cursor-row' } });
+
+      const page = await service.list(CHURCH, callerWith('super_admin'), {
+        limit: 2,
+        direction: 'backward',
+        cursor: 'cursor-row',
+      });
+
+      // rows.slice(0, limit) = [a, b], then reversed back to ascending order.
+      expect(page.items.map((s) => s.id)).toEqual(['b', 'a']);
+      expect(page.hasNextPage).toBe(true);
+      expect(page.hasPreviousPage).toBe(true);
+      expect(page.startCursor).toBe('b');
+      expect(page.endCursor).toBe('a');
+    });
+
+    it('passes skip:1 and the cursor id through to findMany once the cursor is validated', async () => {
+      const { service, prisma } = build({ allStaff: [], staff: { id: 'cursor-row' } });
+
+      await service.list(CHURCH, callerWith('super_admin'), {
+        limit: 50,
+        direction: 'forward',
+        cursor: 'cursor-row',
+      });
+
+      expect(prisma.staff.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ cursor: { id: 'cursor-row' }, skip: 1 }),
+      );
+    });
+
+    it('falls back startCursor to the (already-validated) query cursor on an empty forward page', async () => {
+      // Rows after the cursor were deleted since the client got this cursor —
+      // the page is legitimately empty, but there's still a page before it.
+      const { service } = build({ allStaff: [], staff: { id: 'cursor-row' } });
+
+      const page = await service.list(CHURCH, callerWith('super_admin'), {
+        limit: 50,
+        direction: 'forward',
+        cursor: 'cursor-row',
+      });
+
+      expect(page.items).toEqual([]);
+      expect(page.hasPreviousPage).toBe(true);
+      expect(page.startCursor).toBe('cursor-row');
+      expect(page.hasNextPage).toBe(false);
+      expect(page.endCursor).toBeNull();
+    });
+
+    it('falls back endCursor to the (already-validated) query cursor on an empty backward page', async () => {
+      const { service } = build({ allStaff: [], staff: { id: 'cursor-row' } });
+
+      const page = await service.list(CHURCH, callerWith('super_admin'), {
+        limit: 50,
+        direction: 'backward',
+        cursor: 'cursor-row',
+      });
+
+      expect(page.items).toEqual([]);
+      expect(page.hasNextPage).toBe(true);
+      expect(page.endCursor).toBe('cursor-row');
+      expect(page.hasPreviousPage).toBe(false);
+      expect(page.startCursor).toBeNull();
+    });
+
+    // Whether an out-of-scope cursor is correctly treated as "not found" is
+    // an authorization-correctness question a mocked findFirst can't answer
+    // (see guard.e2e-spec.ts for that). This only proves the mechanical
+    // wiring: a not-found cursor 400s instead of silently paging past it.
+    it('400s when the cursor lookup comes back empty, instead of silently paging', async () => {
+      const { service, prisma } = build({ allStaff: [], staff: null });
+
+      await expect(
+        service.list(CHURCH, callerWith('super_admin'), {
+          limit: 50,
+          direction: 'forward',
+          cursor: 'someone-elses-row',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.staff.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects direction=backward with no cursor rather than silently returning the last page', async () => {
+      const { service } = build({ allStaff: [] });
+
+      await expect(
+        service.list(CHURCH, callerWith('super_admin'), { limit: 50, direction: 'backward' }),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   it('rejects a caller with no scopes of their own trying to manage anyone', async () => {

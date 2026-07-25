@@ -2,6 +2,7 @@ import {
   AcceptInviteResponseSchema,
   CreateStaffSchema,
   LinkLoginSchema,
+  paginatedResponseSchema,
   ReplaceScopesSchema,
   StaffInviteSchema,
   StaffSchema,
@@ -18,3 +19,4 @@ export class StaffInviteDto extends createZodDto(StaffInviteSchema) {}
 export class StaffWithInviteDto extends createZodDto(StaffWithInviteSchema) {}
 export class AcceptInviteResponseDto extends createZodDto(AcceptInviteResponseSchema) {}
 export class LinkLoginDto extends createZodDto(LinkLoginSchema) {}
+export class StaffPageDto extends createZodDto(paginatedResponseSchema(StaffSchema)) {}

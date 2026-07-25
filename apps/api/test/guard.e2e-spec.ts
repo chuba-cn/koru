@@ -526,12 +526,26 @@ describe('Guards (e2e)', () => {
       .expect(403);
   });
 
-  it('lets a regional_admin list only the staff within their region, while super_admin sees everyone', async () => {
+  it('lets a regional_admin list only the staff they fully cover, while super_admin sees everyone', async () => {
+    // This is the one place that proves buildStaffVisibilityWhere's `every`/`some`
+    // clause actually compiles to the intended SQL against real Postgres — a unit
+    // test with a mocked Prisma client can't tell `every` from `some`, since the
+    // mock doesn't apply the where clause at all. See staff.service.spec.ts.
     const alice = await createAuthedChurchWithRegion(app);
     const otherRegion = await request(app.getHttpServer())
       .post(`/churches/${alice.churchId}/regions`)
       .set('Cookie', alice.cookie)
       .send({ name: 'South', state: 'Rivers' })
+      .expect(201);
+    const branchInRegion = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja', regionId: alice.regionId })
+      .expect(201);
+    const branchOutsideRegion = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Port Harcourt', regionId: otherRegion.body.id })
       .expect(201);
 
     await request(app.getHttpServer())
@@ -544,7 +558,7 @@ describe('Guards (e2e)', () => {
         scopes: [{ scopeType: 'region', scopeRefId: alice.regionId }],
       })
       .expect(201);
-    await request(app.getHttpServer())
+    const outOfRegion = await request(app.getHttpServer())
       .post(`/churches/${alice.churchId}/staff`)
       .set('Cookie', alice.cookie)
       .send({
@@ -554,14 +568,38 @@ describe('Guards (e2e)', () => {
         scopes: [{ scopeType: 'region', scopeRefId: otherRegion.body.id }],
       })
       .expect(201);
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'Partially Covered',
+        email: 'partial@example.test',
+        role: 'recorder',
+        scopes: [
+          { scopeType: 'branch', scopeRefId: branchInRegion.body.id },
+          { scopeType: 'branch', scopeRefId: branchOutsideRegion.body.id },
+        ],
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/staff`)
+      .set('Cookie', alice.cookie)
+      .send({
+        fullName: 'No Scope At All',
+        email: 'no-scope@example.test',
+        role: 'recorder',
+      })
+      .expect(201);
 
     const asSuperAdmin = await request(app.getHttpServer())
       .get(`/churches/${alice.churchId}/staff`)
       .set('Cookie', alice.cookie)
       .expect(200);
-    const namesAsSuperAdmin = asSuperAdmin.body.map((s) => s.fullName);
+    const namesAsSuperAdmin = asSuperAdmin.body.items.map((s: { fullName: string }) => s.fullName);
     expect(namesAsSuperAdmin).toContain('In Region');
     expect(namesAsSuperAdmin).toContain('Out Of Region');
+    expect(namesAsSuperAdmin).toContain('Partially Covered');
+    expect(namesAsSuperAdmin).toContain('No Scope At All');
 
     await prisma.staff.update({
       where: { id: alice.staffId },
@@ -575,9 +613,27 @@ describe('Guards (e2e)', () => {
       .get(`/churches/${alice.churchId}/staff`)
       .set('Cookie', alice.cookie)
       .expect(200);
-    const namesAsRegionalAdmin = asRegionalAdmin.body.map((s) => s.fullName);
+    const namesAsRegionalAdmin = asRegionalAdmin.body.items.map(
+      (s: { fullName: string }) => s.fullName,
+    );
+    // Fully covered: a region-scoped target inside the caller's region.
     expect(namesAsRegionalAdmin).toContain('In Region');
+    // Not covered at all: a different region entirely.
     expect(namesAsRegionalAdmin).not.toContain('Out Of Region');
+    // Covers ONE of two branch scopes: must be excluded — this is the `every`,
+    // not `some`, semantic. A mocked findMany can't tell these apart; Postgres can.
+    expect(namesAsRegionalAdmin).not.toContain('Partially Covered');
+    // Zero scopes: canManageStaff refuses this even for a caller who could
+    // otherwise manage the role, so buildStaffVisibilityWhere must too.
+    expect(namesAsRegionalAdmin).not.toContain('No Scope At All');
+
+    // A cursor outside the caller's visibility scope must 400 rather than
+    // silently resolving.
+    await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/staff`)
+      .query({ cursor: outOfRegion.body.id })
+      .set('Cookie', alice.cookie)
+      .expect(400);
   });
 
   // Only regional_admin is exercised: RolesGuard checks membership in a fixed role

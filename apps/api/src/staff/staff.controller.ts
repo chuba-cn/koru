@@ -10,6 +10,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -28,7 +29,7 @@ import { CallerStaff } from '../auth/caller-staff.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { StaffRoles } from '../auth/staff-roles.decorator';
 import { TenantGuard, TenantStaff } from '../auth/tenant.guard';
-import { ErrorResponseDto } from '../common/api.dto';
+import { ErrorResponseDto, PaginationQueryDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import {
   CreateStaffDto,
@@ -36,6 +37,7 @@ import {
   ReplaceScopesDto,
   StaffDto,
   StaffInviteDto,
+  StaffPageDto,
   StaffWithInviteDto,
   UpdateStaffDto,
 } from './staff.dto';
@@ -83,12 +85,21 @@ export class StaffController {
   @ApiOperation({
     summary: 'List staff of a church, including their scopes',
     description:
-      'A delegated admin (regional_admin/branch_admin) sees only staff they could manage — their own tier or below, within their own scope. super_admin sees everyone.',
+      'A delegated admin (regional_admin/branch_admin) sees only staff they could manage — their own tier or below, within their own scope. super_admin sees everyone. Cursor paginated, ordered by full name (id as tiebreaker). Pass "endCursor" with "direction=forward" for Next, or "startCursor" with "direction=backward" for previous',
   })
-  @ApiOkResponse({ type: StaffDto, isArray: true })
+  @ApiOkResponse({ type: StaffPageDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
-  list(@Param('churchId', ParseUUIDPipe) churchId: string, @CallerStaff() caller: TenantStaff) {
-    return this.staffService.list(churchId, caller);
+  @ApiBadRequestResponse({
+    description:
+      'Malformed cursor/limit, cursor not found or not visible to the caller, or direction=backward with no cursor',
+    type: ErrorResponseDto,
+  })
+  list(
+    @Param('churchId', ParseUUIDPipe) churchId: string,
+    @Query(new ZodValidationPipe(PaginationQueryDto.schema)) query: PaginationQueryDto,
+    @CallerStaff() caller: TenantStaff,
+  ) {
+    return this.staffService.list(churchId, caller, query);
   }
 
   @Patch(':id')

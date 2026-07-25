@@ -1,6 +1,7 @@
 import type {
   CreateStaffInput,
   LinkLoginInput,
+  PaginationQuery,
   ReplaceScopesInput,
   ScopeInput,
   UpdateStaffInput,
@@ -180,6 +181,62 @@ export class StaffService {
     return true;
   }
 
+  /**
+   * The WHERE-clause equivalent of canManageStaff, built once before the query
+   * runs rather than checked once per fetched row. Any change to the scope rule
+   * in canManageStaff must be mirrored here — see that method's comment.
+   */
+  private async buildStaffVisibilityWhere(
+    churchId: string,
+    caller: TenantStaff,
+  ): Promise<Prisma.StaffWhereInput> {
+    if (caller.role === 'super_admin') return { churchId };
+
+    const allowedRoles = DELEGATED_ROLE_CEILING[caller.role] ?? [];
+    if (allowedRoles.length === 0) {
+      // No delegated ceiling at all (finance/recorder), same as canManageStaff's
+      // implicit "not a manager" case. A condition that can never match any row,
+      // expressed without depending on Staff.id's underlying column type.
+      return { id: { in: [] } };
+    }
+
+    const callerRegionIds = caller.scopes
+      .filter((s) => s.scopeType === 'region')
+      .map((s) => s.scopeRefId);
+    const callerBranchIds = caller.scopes
+      .filter((s) => s.scopeType === 'branch')
+      .map((s) => s.scopeRefId);
+
+    const branchesInCallerRegions = callerRegionIds.length
+      ? await this.prisma.branch.findMany({
+          where: { churchId, regionId: { in: callerRegionIds } },
+          select: { id: true },
+        })
+      : [];
+
+    const coveredBranchIds = [
+      ...new Set([...callerBranchIds, ...branchesInCallerRegions.map((branch) => branch.id)]),
+    ];
+
+    return {
+      churchId,
+      role: { in: allowedRoles },
+      scopes: {
+        some: {},
+        every: {
+          OR: [
+            ...(callerRegionIds.length
+              ? [{ scopeType: 'region' as const, scopeRefId: { in: callerRegionIds } }]
+              : []),
+            ...(coveredBranchIds.length
+              ? [{ scopeType: 'branch' as const, scopeRefId: { in: coveredBranchIds } }]
+              : []),
+          ],
+        },
+      },
+    };
+  }
+
   private async assertCanManageStaff(
     caller: TenantStaff,
     target: { role: StaffRole; scopes: ScopeInput[] },
@@ -256,18 +313,64 @@ export class StaffService {
     return { ...withStatus(staff), invite };
   }
 
-  async list(churchId: string, caller: TenantStaff) {
+  async list(churchId: string, caller: TenantStaff, query: PaginationQuery) {
     await this.assertChurchExists(churchId);
-    const staff = await this.prisma.staff.findMany({
-      where: { churchId },
-      orderBy: { fullName: 'asc' },
-      ...staffQueryShape,
-    });
+    const where = await this.buildStaffVisibilityWhere(churchId, caller);
+    const backward = query.direction === 'backward';
 
-    if (caller.role === 'super_admin') return staff.map(withStatus);
+    if (backward && !query.cursor) {
+      throw new BadRequestException('direction=backward requires a cursor (use "startCursor")');
+    }
 
-    const visibility = await Promise.all(staff.map((s) => this.canManageStaff(caller, s)));
-    return staff.filter((_, index) => visibility[index]).map(withStatus);
+    if (query.cursor) {
+      // Prisma's cursor subquery is keyed only on the cursor field (id) — it
+      // does not re-apply `where`, so an unchecked cursor is a positional
+      // oracle for a row outside this caller's tenant/scope. AND, not a
+      // spread: `where` can itself already carry an `id` key (the fail-closed
+      // `{ id: { in: [] } }` branch in buildStaffVisibilityWhere), and
+      // spreading `id` after it would silently overwrite that guard.
+      const cursorRow = await this.prisma.staff.findFirst({
+        where: { AND: [where, { id: query.cursor }] },
+        select: { id: true },
+      });
+      if (!cursorRow) {
+        throw new BadRequestException('cursor not found');
+      }
+    }
+
+    const [totalCount, rows] = await Promise.all([
+      this.prisma.staff.count({ where }),
+      this.prisma.staff.findMany({
+        where,
+        orderBy: backward
+          ? [{ fullName: 'desc' }, { id: 'desc' }]
+          : [{ fullName: 'asc' }, { id: 'asc' }],
+        take: query.limit + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+        ...staffQueryShape,
+      }),
+    ]);
+
+    const hasMore = rows.length > query.limit;
+    const page = rows.slice(0, query.limit);
+    const ordered = backward ? page.reverse() : page;
+    const items = ordered.map(withStatus);
+
+    const hasNextPage = backward ? Boolean(query.cursor) : hasMore;
+    const hasPreviousPage = backward ? hasMore : Boolean(query.cursor);
+
+    // An empty page can still have a real edge to page back toward — e.g. a
+    // valid cursor pointing at the last row, whose successors got deleted.
+    // query.cursor is safe to fall back to here: it was already checked
+    // above to exist and be visible to this caller.
+    return {
+      items,
+      totalCount,
+      hasNextPage,
+      hasPreviousPage,
+      startCursor: items[0]?.id ?? (hasPreviousPage ? (query.cursor ?? null) : null),
+      endCursor: items[items.length - 1]?.id ?? (hasNextPage ? (query.cursor ?? null) : null),
+    };
   }
 
   async findById(churchId: string, id: string) {
