@@ -187,6 +187,7 @@ model Staff {
   user              User?         @relation("StaffUser", fields: [userId], references: [id], onDelete: SetNull)
 
   @@unique([churchId, email])
+  @@index([churchId, fullName, id])
 }
 
 model StaffScope {

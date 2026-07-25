@@ -174,13 +174,14 @@ describe('Staff (e2e)', () => {
       .set('Cookie', cookie)
       .expect(200);
 
-    expect(list.body.every((s: { passwordHash: unknown }) => s.passwordHash === undefined)).toBe(
-      true,
-    );
+    expect(
+      list.body.items.every((s: { passwordHash: unknown }) => s.passwordHash === undefined),
+    ).toBe(true);
 
-    const ada = list.body.find((s: { email: string }) => s.email === 'ada@example.com');
+    const ada = list.body.items.find((s: { email: string }) => s.email === 'ada@example.com');
     expect(ada).toBeDefined();
     expect(ada.scopes).toHaveLength(1);
+    expect(list.body.totalCount).toBeGreaterThanOrEqual(1);
   });
 
   it('updates role via PATCH and replaces scopes wholesale via PUT (empty array clears)', async () => {
@@ -263,7 +264,7 @@ describe('Staff (e2e)', () => {
       .set('Cookie', bob.cookie)
       .expect(200);
 
-    expect(list.body.map((s: { id: string }) => s.id)).not.toContain(ada.body.id);
+    expect(list.body.items.map((s: { id: string }) => s.id)).not.toContain(ada.body.id);
 
     await request(app.getHttpServer())
       .patch(`/churches/${bob.churchId}/staff/${ada.body.id}`)
@@ -275,6 +276,74 @@ describe('Staff (e2e)', () => {
       .delete(`/churches/${bob.churchId}/staff/${ada.body.id}`)
       .set('Cookie', bob.cookie)
       .expect(404);
+
+    // A cross-tenant staff id used as a pagination cursor must 400, not
+    // silently resolve — Prisma's cursor subquery ignores the tenant `where`
+    // clause, so an unchecked cursor would let bob's church use alice's
+    // staff id as a positional oracle into a roster it can't see.
+    await request(app.getHttpServer())
+      .get(`/churches/${bob.churchId}/staff`)
+      .query({ cursor: ada.body.id })
+      .set('Cookie', bob.cookie)
+      .expect(400);
+  });
+
+  it('walks a real roster forward then backward with no repeats or skips', async () => {
+    const { cookie, churchId } = await createAuthedChurchWithRegion(app);
+
+    // Deliberately non-alphabetical insertion order, so a passing test can't
+    // be explained by "it happened to already be in order."
+    const staffToCreate = [
+      { fullName: 'Chidi Obi', email: 'chidi@example.com' },
+      { fullName: 'Amaka Obi', email: 'amaka@example.com' },
+      { fullName: 'Bola Obi', email: 'bola@example.com' },
+    ];
+    for (const { fullName, email } of staffToCreate) {
+      await request(app.getHttpServer())
+        .post(`/churches/${churchId}/staff`)
+        .set('Cookie', cookie)
+        .send({ fullName, email, role: 'finance' })
+        .expect(201);
+    }
+
+    const first = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/staff`)
+      .query({ limit: 2 })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(first.body.hasNextPage).toBe(true);
+    expect(first.body.hasPreviousPage).toBe(false);
+
+    const second = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/staff`)
+      .query({ limit: 2, cursor: first.body.endCursor })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    const firstIds = first.body.items.map((s: { id: string }) => s.id);
+    const secondIds = second.body.items.map((s: { id: string }) => s.id);
+    expect(secondIds.some((id: string) => firstIds.includes(id))).toBe(false);
+    expect(second.body.hasPreviousPage).toBe(true);
+
+    // Which page each name lands on depends on where the seeded super_admin's
+    // name sorts, so order is asserted across both concatenated pages.
+    const walkedNames = [...first.body.items, ...second.body.items].map(
+      (s: { fullName: string }) => s.fullName,
+    );
+    expect(walkedNames.filter((n: string) => n.endsWith(' Obi'))).toEqual([
+      'Amaka Obi',
+      'Bola Obi',
+      'Chidi Obi',
+    ]);
+
+    const back = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/staff`)
+      .query({ limit: 2, direction: 'backward', cursor: second.body.startCursor })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(back.body.items.map((s: { id: string }) => s.id)).toEqual(firstIds);
   });
 
   it('409s deleting the last super_admin of a church', async () => {

@@ -186,7 +186,7 @@ graph LR
 | `church` | `GET`/`PATCH /churches/:churchId` | Tenant; `PATCH` also needs super_admin |
 | `region` | CRUD under `/churches/:churchId/regions` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
 | `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
-| `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; every route except clear-login is also open to `regional_admin`/`branch_admin`, capped by [delegated management](./architecture/delegated-staff-management.md) |
+| `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; every route except clear-login is also open to `regional_admin`/`branch_admin`, capped by [delegated management](./architecture/delegated-staff-management.md); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
 | `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin |
 | `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard |
@@ -230,6 +230,22 @@ Success responses return the resource itself, with no wrapper. Every failure con
 ### Never serialize these
 
 `passwordHash`, `paystackSubaccountCode`, full account numbers, and any Better Auth token. Use Prisma's `omit` or a `publicShape` constant, and assert their absence in tests.
+
+### Paginated lists are cursor-based, not offset-based
+
+`GET /staff` is the first endpoint on the shared cursor contract in `packages/shared/src/pagination.ts`:
+`{ items, totalCount, hasNextPage, hasPreviousPage, startCursor, endCursor }`, with a
+`?cursor&direction&limit` query. Not offset (`page`/`pageSize`): offset pagination makes Postgres
+skip `N` rows to reach a deep page, which gets slower the further a client pages, and it isn't
+stable under concurrent inserts/deletes — real concerns at KORU's target scale of a single tenant
+with 30,000+ members and 500+ branches. Every other list endpoint expected to grow past a small,
+fixed size is tracked to move onto this same contract by
+[koru-app/koru#81](https://github.com/koru-app/koru/issues/81); until that lands, treat an
+unpaginated list endpoint as a known gap, not a precedent to copy. See
+[ADR-0006](../apps/api/docs/adr/0006-standard-error-shape-no-envelope.md)'s update and
+`StaffService.list` (`apps/api/src/staff/staff.service.ts`) for the reference implementation,
+including how authorization scoping is pushed into the same `where` clause instead of filtering in
+application code after an unbounded fetch.
 
 ### Money is always integer Kobo
 

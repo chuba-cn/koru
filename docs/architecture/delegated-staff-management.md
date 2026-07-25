@@ -112,9 +112,8 @@ to begin with.
 ## `list` is filtered, not just gated
 
 Unlike the other routes, `GET /staff` doesn't reject a delegated caller outright — it used to be
-`super_admin`-only, and now returns a **filtered roster**: exactly the staff a `regional_admin`/
-`branch_admin` could manage (same `canManageStaff` check, run per row). `super_admin` still sees
-everyone.
+`super_admin`-only, and now returns a **filtered, paginated roster**: exactly the staff a
+`regional_admin`/`branch_admin` could manage. `super_admin` still sees everyone.
 
 This matters for a reason beyond convenience: without it, a delegated caller could be granted
 `update`/`remove`/invite authority over people within their scope, yet have no way to discover those
@@ -122,12 +121,21 @@ people's ids through the API at all — a caller who can act but can't see is ju
 can see but can't act. Filtering `list` closes that gap, and also stops a `regional_admin` from
 seeing another region's roster, which the unfiltered list would otherwise leak.
 
-**Known tradeoff:** for a delegated caller, filtering runs `canManageStaff` per row, and each scope
-on each row can cost a `scopeCovers` call (a `branch.findFirst` query, for a region-scoped caller
-checking a branch-scoped row). A church with a large roster and heavily multi-scoped staff turns one
-`GET /staff` into a proportional number of queries. Acceptable at today's scale — there is no
-pagination on this endpoint at all yet — but the first place to look if this route gets slow as
-rosters grow.
+**The filter runs as a WHERE clause, not a per-row check (#82).** `list` originally called
+`canManageStaff` once per fetched row — a real N+1: each scope on each row could cost a
+`scopeCovers` query, so a large, heavily multi-scoped roster turned one `GET /staff` into a
+proportional number of database round-trips. `buildStaffVisibilityWhere` (in
+`apps/api/src/staff/staff.service.ts`) replaces that with a single Prisma `where` clause the
+database applies directly: `super_admin` gets `{ churchId }`; a delegated caller gets
+`{ churchId, role: { in: allowedRoles }, scopes: { some: {}, every: { OR: [...] } } }`, where the
+`OR` list is the caller's own scopes plus (for a region-scoped caller) every branch inside those
+regions, resolved with one extra `branch.findMany` call. `every` — not `some` — is what makes this
+match `canManageStaff`'s rule that *all* of a target's scopes must be caller-covered, not just one;
+a change to that rule in `canManageStaff` must be mirrored here, and both are exercised together in
+`apps/api/test/guard.e2e-spec.ts` against real Postgres, since a mocked Prisma client can't tell
+`every` from `some`. The result: a fixed, small number of queries (branch-resolve + count + fetch)
+regardless of roster size, and results paginated per [ADR-0006](../../apps/api/docs/adr/0006-standard-error-shape-no-envelope.md)'s
+cursor contract, ordered by `fullName` with `id` as the tiebreaker.
 
 ---
 

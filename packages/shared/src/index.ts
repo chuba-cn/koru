@@ -32,6 +32,7 @@ export * from './giving.js';
 export * from './mask.js';
 export * from './member.js';
 export * from './onboarding.js';
+export * from './pagination.js';
 export * from './region.js';
 export * from './schemas.js';
 export * from './settlement-account.js';
