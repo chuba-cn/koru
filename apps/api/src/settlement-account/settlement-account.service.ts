@@ -5,6 +5,14 @@ import type {
 } from '@koru/shared';
 import { maskTail } from '@koru/shared';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ScopeService } from '../auth/scope.service';
+import type { TenantStaff } from '../auth/tenant.guard';
+import {
+  assertCursorVisible,
+  assertValidDirection,
+  buildCursorPage,
+} from '../common/cursor-pagination';
+import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const publicShape = {
@@ -13,7 +21,10 @@ const publicShape = {
 
 @Injectable()
 export class SettlementAccountService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scopeService: ScopeService,
+  ) {}
 
   private async assertChurchExists(churchId: string) {
     const church = await this.prisma.church.findUnique({ where: { id: churchId } });
@@ -49,13 +60,44 @@ export class SettlementAccountService {
     });
   }
 
-  async list(churchId: string, query: ListSettlementAccountsQuery) {
+  async list(churchId: string, caller: TenantStaff, query: ListSettlementAccountsQuery) {
     await this.assertChurchExists(churchId);
-    return this.prisma.settlementAccount.findMany({
-      where: { churchId, ...(query.branchId ? { branchId: query.branchId } : {}) },
-      orderBy: { label: 'asc' },
-      ...publicShape,
-    });
+
+    const scopeWhere: Prisma.SettlementAccountWhereInput =
+      caller.role === 'super_admin'
+        ? {}
+        : {
+            OR: [
+              { branchId: { in: await this.scopeService.coveredBranchIds(churchId, caller) } },
+              { branchId: null },
+            ],
+          };
+
+    const where: Prisma.SettlementAccountWhereInput = {
+      AND: [{ churchId }, scopeWhere, ...(query.branchId ? [{ branchId: query.branchId }] : [])],
+    };
+
+    assertValidDirection(query);
+    await assertCursorVisible(query.cursor, (cursor) =>
+      this.prisma.settlementAccount.findFirst({
+        where: { AND: [where, { id: cursor }] },
+        select: { id: true },
+      }),
+    );
+
+    const backward = query.direction === 'backward';
+    const [totalCount, rows] = await Promise.all([
+      this.prisma.settlementAccount.count({ where }),
+      this.prisma.settlementAccount.findMany({
+        where,
+        orderBy: backward ? [{ label: 'desc' }, { id: 'desc' }] : [{ label: 'asc' }, { id: 'asc' }],
+        take: query.limit + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+        ...publicShape,
+      }),
+    ]);
+
+    return buildCursorPage(rows, totalCount, query);
   }
 
   async findById(churchId: string, id: string) {

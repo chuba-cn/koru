@@ -125,7 +125,6 @@ model Region {
   branches Branch[]
 
   @@unique([churchId, name])
-  @@index([churchId])
 }
 
 model Branch {
@@ -142,7 +141,6 @@ model Branch {
   settlementAccounts SettlementAccount[]
 
   @@unique([churchId, name])
-  @@index([churchId])
   @@index([regionId])
 }
 
@@ -233,7 +231,7 @@ model SettlementAccount {
   branch    Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
   campaigns Campaign[]
 
-  @@index([churchId])
+  @@index([churchId, label, id])
   @@index([branchId])
 }
 

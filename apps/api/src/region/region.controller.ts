@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -23,12 +24,13 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { CallerStaff } from '../auth/caller-staff.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { StaffRoles } from '../auth/staff-roles.decorator';
-import { TenantGuard } from '../auth/tenant.guard';
-import { ErrorResponseDto } from '../common/api.dto';
+import { TenantGuard, TenantStaff } from '../auth/tenant.guard';
+import { ErrorResponseDto, PaginationQueryDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { CreateRegionDto, RegionDto, UpdateRegionDto } from './region.dto';
+import { CreateRegionDto, RegionDto, RegionPageDto, UpdateRegionDto } from './region.dto';
 import { RegionService } from './region.service';
 
 @ApiTags('regions')
@@ -64,11 +66,24 @@ export class RegionController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List regions of a church' })
-  @ApiOkResponse({ type: RegionDto, isArray: true })
+  @ApiOperation({
+    summary: 'List regions of a church',
+    description:
+      'A delegated caller sees only regions within their own scope — their own region(s), or the region(s) containing their branch(es). super_admin sees everyone. Cursor paginated, ordered by name (id as tiebreaker). Send the response "endCursor" value as "cursor" with "direction=forward" for Next, or the response "startCursor" value as "cursor" with "direction=backward" for previous',
+  })
+  @ApiOkResponse({ type: RegionPageDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
-  list(@Param('churchId', ParseUUIDPipe) churchId: string) {
-    return this.regionService.list(churchId);
+  @ApiBadRequestResponse({
+    description:
+      'Malformed cursor/limit, cursor not found or not visible to the caller, or direction=backward with no cursor',
+    type: ErrorResponseDto,
+  })
+  list(
+    @Param('churchId', ParseUUIDPipe) churchId: string,
+    @CallerStaff() caller: TenantStaff,
+    @Query(new ZodValidationPipe(PaginationQueryDto.schema)) query: PaginationQueryDto,
+  ) {
+    return this.regionService.list(churchId, caller, query);
   }
 
   @Patch(':id')

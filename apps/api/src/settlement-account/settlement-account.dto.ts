@@ -1,6 +1,7 @@
 import {
   CreateSettlementAccountSchema,
   ListSettlementAccountsQuerySchema,
+  paginatedResponseSchema,
   SettlementAccountSchema,
   UpdateSettlementAccountSchema,
 } from '@koru/shared';
@@ -12,3 +13,6 @@ export class ListSettlementAccountsQueryDto extends createZodDto(
   ListSettlementAccountsQuerySchema,
 ) {}
 export class SettlementAccountDto extends createZodDto(SettlementAccountSchema) {}
+export class SettlementAccountPageDto extends createZodDto(
+  paginatedResponseSchema(SettlementAccountSchema),
+) {}

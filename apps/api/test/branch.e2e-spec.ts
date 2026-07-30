@@ -98,15 +98,16 @@ describe('Branches (e2e)', () => {
       .set('Cookie', cookie)
       .expect(200);
 
-    expect(all.body).toHaveLength(2);
+    expect(all.body.items).toHaveLength(2);
+    expect(all.body.totalCount).toBe(2);
 
     const filtered = await request(app.getHttpServer())
       .get(`/churches/${churchId}/branches?regionId=${regionId}`)
       .set('Cookie', cookie)
       .expect(200);
 
-    expect(filtered.body).toHaveLength(1);
-    expect(filtered.body[0].name).toBe('KORU Abuja');
+    expect(filtered.body.items).toHaveLength(1);
+    expect(filtered.body.items[0].name).toBe('KORU Abuja');
   });
 
   it('moves a branch to another region, then clears the region with null', async () => {
@@ -184,7 +185,7 @@ describe('Branches (e2e)', () => {
       .set('Cookie', bob.cookie)
       .expect(200);
 
-    expect(list.body).toHaveLength(0);
+    expect(list.body.items).toHaveLength(0);
 
     await request(app.getHttpServer())
       .patch(`/churches/${bob.churchId}/branches/${branch.id}`)
@@ -203,5 +204,125 @@ describe('Branches (e2e)', () => {
 
     expect(res.body.error).toBe('BAD_REQUEST');
     expect(res.body.errors.regionId).toBeDefined();
+  });
+
+  it('scopes a regional_admin to branches inside their region, and rejects an out-of-scope cursor', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const otherRegion = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Lagos', state: 'Lagos' })
+      .expect(201);
+
+    const inRegion = await createBranch(app, alice.churchId, alice.cookie, 'Ikeja');
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/branches/${inRegion.id}`)
+      .set('Cookie', alice.cookie)
+      .send({ regionId: alice.regionId })
+      .expect(200);
+    const outOfRegion = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Port Harcourt', regionId: otherRegion.body.id })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    const list = await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .expect(200);
+
+    const ids = list.body.items.map((b: { id: string }) => b.id);
+    expect(ids).toContain(inRegion.id);
+    expect(ids).not.toContain(outOfRegion.body.id);
+
+    await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/branches`)
+      .query({ cursor: outOfRegion.body.id })
+      .set('Cookie', alice.cookie)
+      .expect(400);
+  });
+
+  it('scopes a branch_admin to only their own branch, not a peer branch in the same region', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const own = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja', regionId: alice.regionId })
+      .expect(201);
+    const peer = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Surulere', regionId: alice.regionId })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'branch_admin',
+        scopes: { create: [{ scopeType: 'branch', scopeRefId: own.body.id }] },
+      },
+    });
+
+    const list = await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .expect(200);
+
+    const ids = list.body.items.map((b: { id: string }) => b.id);
+    expect(ids).toContain(own.body.id);
+    expect(ids).not.toContain(peer.body.id);
+  });
+
+  it('walks a real roster forward then backward with no repeats or skips', async () => {
+    const { cookie, churchId } = await createAuthedChurch(app);
+
+    for (const name of ['Ikeja', 'Abuja Central', 'Garki']) {
+      await request(app.getHttpServer())
+        .post(`/churches/${churchId}/branches`)
+        .set('Cookie', cookie)
+        .send({ name })
+        .expect(201);
+    }
+
+    const first = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/branches`)
+      .query({ limit: 2 })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(first.body.hasNextPage).toBe(true);
+    expect(first.body.hasPreviousPage).toBe(false);
+
+    const second = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/branches`)
+      .query({ limit: 2, cursor: first.body.endCursor })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    const firstIds = first.body.items.map((b: { id: string }) => b.id);
+    const secondIds = second.body.items.map((b: { id: string }) => b.id);
+    expect(secondIds.some((id: string) => firstIds.includes(id))).toBe(false);
+    expect(second.body.hasPreviousPage).toBe(true);
+
+    const walkedNames = [...first.body.items, ...second.body.items].map(
+      (b: { name: string }) => b.name,
+    );
+    expect(walkedNames).toEqual(['Abuja Central', 'Garki', 'Ikeja']);
+
+    const back = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/branches`)
+      .query({ limit: 2, direction: 'backward', cursor: second.body.startCursor })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(back.body.items.map((b: { id: string }) => b.id)).toEqual(firstIds);
   });
 });

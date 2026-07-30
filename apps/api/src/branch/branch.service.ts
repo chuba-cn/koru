@@ -5,19 +5,28 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ScopeService } from '../auth/scope.service';
+import type { TenantStaff } from '../auth/tenant.guard';
+import {
+  assertCursorVisible,
+  assertValidDirection,
+  buildCursorPage,
+} from '../common/cursor-pagination';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class BranchService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scopeService: ScopeService,
+  ) {}
 
   private async assertChurchExists(churchId: string) {
     const church = await this.prisma.church.findUnique({ where: { id: churchId } });
     if (!church) throw new NotFoundException(`Church ${churchId} not found`);
   }
 
-  /** Body-referenced region must exist AND belong to this church → else 400. */
   private async assertRegionInChurch(churchId: string, regionId: string) {
     const region = await this.prisma.region.findFirst({ where: { id: regionId, churchId } });
 
@@ -44,13 +53,40 @@ export class BranchService {
     }
   }
 
-  async list(churchId: string, query: ListBranchesQuery) {
+  async list(churchId: string, caller: TenantStaff, query: ListBranchesQuery) {
     await this.assertChurchExists(churchId);
 
-    return await this.prisma.branch.findMany({
-      where: { churchId, ...(query.regionId ? { regionId: query.regionId } : {}) },
-      orderBy: { name: 'asc' },
-    });
+    const scopeWhere: Prisma.BranchWhereInput =
+      caller.role === 'super_admin'
+        ? {}
+        : {
+            id: { in: await this.scopeService.coveredBranchIds(churchId, caller) },
+          };
+
+    const where: Prisma.BranchWhereInput = {
+      AND: [{ churchId }, scopeWhere, ...(query.regionId ? [{ regionId: query.regionId }] : [])],
+    };
+
+    assertValidDirection(query);
+    await assertCursorVisible(query.cursor, (cursor) =>
+      this.prisma.branch.findFirst({
+        where: { AND: [where, { id: cursor }] },
+        select: { id: true },
+      }),
+    );
+
+    const backward = query.direction === 'backward';
+    const [totalCount, rows] = await Promise.all([
+      this.prisma.branch.count({ where }),
+      this.prisma.branch.findMany({
+        where,
+        orderBy: backward ? [{ name: 'desc' }, { id: 'desc' }] : [{ name: 'asc' }, { id: 'asc' }],
+        take: query.limit + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      }),
+    ]);
+
+    return buildCursorPage(rows, totalCount, query);
   }
 
   async findById(churchId: string, id: string) {

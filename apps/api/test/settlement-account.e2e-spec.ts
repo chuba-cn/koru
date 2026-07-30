@@ -145,15 +145,16 @@ describe('Settlement accounts (e2e)', () => {
       .set('Cookie', cookie)
       .expect(200);
 
-    expect(all.body).toHaveLength(2);
+    expect(all.body.items).toHaveLength(2);
+    expect(all.body.totalCount).toBe(2);
 
     const filtered = await request(app.getHttpServer())
       .get(`/churches/${churchId}/settlement-accounts?branchId=${branch.id}`)
       .set('Cookie', cookie)
       .expect(200);
 
-    expect(filtered.body).toHaveLength(1);
-    expect(filtered.body[0].label).toBe('Branch Rent');
+    expect(filtered.body.items).toHaveLength(1);
+    expect(filtered.body.items[0].label).toBe('Branch Rent');
   });
 
   it('updates the label', async () => {
@@ -190,12 +191,84 @@ describe('Settlement accounts (e2e)', () => {
       .set('Cookie', bob.cookie)
       .expect(200);
 
-    expect(list.body).toHaveLength(0);
+    expect(list.body.items).toHaveLength(0);
 
     await request(app.getHttpServer())
       .patch(`/churches/${bob.churchId}/settlement-accounts/${acct.body.id}`)
       .set('Cookie', bob.cookie)
       .send({ label: 'Hijacked' })
       .expect(404);
+  });
+
+  it("scopes a finance caller to their own branch's accounts plus any church-wide account, and rejects an out-of-scope cursor", async () => {
+    const alice = await createAuthedChurch(app);
+    const ownBranch = await createBranch(app, alice.churchId, alice.cookie, 'Own Branch');
+    const otherBranch = await createBranch(app, alice.churchId, alice.cookie, 'Other Branch');
+
+    const churchWide = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/settlement-accounts`)
+      .set('Cookie', alice.cookie)
+      .send({ label: 'Church Main', accountNumber: '0000000001', bankName: 'GTB' })
+      .expect(201);
+    const ownAccount = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/settlement-accounts`)
+      .set('Cookie', alice.cookie)
+      .send({
+        label: 'Own Account',
+        accountNumber: '0000000002',
+        bankName: 'GTB',
+        branchId: ownBranch.id,
+      })
+      .expect(201);
+    const otherAccount = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/settlement-accounts`)
+      .set('Cookie', alice.cookie)
+      .send({
+        label: 'Other Account',
+        accountNumber: '0000000003',
+        bankName: 'GTB',
+        branchId: otherBranch.id,
+      })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'finance',
+        scopes: { create: [{ scopeType: 'branch', scopeRefId: ownBranch.id }] },
+      },
+    });
+
+    const list = await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/settlement-accounts`)
+      .set('Cookie', alice.cookie)
+      .expect(200);
+
+    const ids = list.body.items.map((a: { id: string }) => a.id);
+    expect(ids).toContain(churchWide.body.id);
+    expect(ids).toContain(ownAccount.body.id);
+    expect(ids).not.toContain(otherAccount.body.id);
+
+    for (const account of list.body.items) {
+      expect(account.paystackSubaccountCode).toBeUndefined();
+    }
+
+    await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/settlement-accounts`)
+      .query({ cursor: otherAccount.body.id })
+      .set('Cookie', alice.cookie)
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/settlement-accounts`)
+      .set('Cookie', alice.cookie)
+      .send({ label: 'Sneaky', accountNumber: '0000000004', bankName: 'GTB' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/settlement-accounts/${ownAccount.body.id}`)
+      .set('Cookie', alice.cookie)
+      .send({ label: 'Renamed' })
+      .expect(403);
   });
 });

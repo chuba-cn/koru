@@ -19,15 +19,17 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { CallerStaff } from '../auth/caller-staff.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { StaffRoles } from '../auth/staff-roles.decorator';
-import { TenantGuard } from '../auth/tenant.guard';
+import { TenantGuard, TenantStaff } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import {
   CreateSettlementAccountDto,
   ListSettlementAccountsQueryDto,
   SettlementAccountDto,
+  SettlementAccountPageDto,
   UpdateSettlementAccountDto,
 } from './settlement-account.dto';
 import { SettlementAccountService } from './settlement-account.service';
@@ -61,16 +63,30 @@ export class SettlementAccountController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List settlement accounts, optionally filtered by branch' })
-  @ApiOkResponse({ type: SettlementAccountDto, isArray: true })
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @ApiOperation({
+    summary: 'List settlement accounts, optionally filtered by branch',
+    description:
+      'Unlike the rest of this controller, readable by delegated roles: a regional_admin/branch_admin/finance caller sees the accounts of branches within their own scope, plus any church-wide account (branchId null). super_admin sees everyone. Cursor paginated, ordered by label (id as tiebreaker). Send the response "endCursor" value as "cursor" with "direction=forward" for Next, or the response "startCursor" value as "cursor" with "direction=backward" for previous',
+  })
+  @ApiOkResponse({ type: SettlementAccountPageDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
-  @ApiBadRequestResponse({ description: 'Malformed query', type: ErrorResponseDto })
+  @ApiBadRequestResponse({
+    description:
+      'Malformed cursor/limit, cursor not found or not visible to the caller, or direction=backward with no cursor',
+    type: ErrorResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Church does not belong to the session, or role cannot read settlement accounts',
+    type: ErrorResponseDto,
+  })
   list(
     @Param('churchId', ParseUUIDPipe) churchId: string,
+    @CallerStaff() caller: TenantStaff,
     @Query(new ZodValidationPipe(ListSettlementAccountsQueryDto.schema))
     query: ListSettlementAccountsQueryDto,
   ) {
-    return this.service.list(churchId, query);
+    return this.service.list(churchId, caller, query);
   }
 
   @Patch(':id')
