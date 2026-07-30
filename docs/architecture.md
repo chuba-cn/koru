@@ -160,7 +160,7 @@ graph LR
         join["member (/join)"]
     end
 
-    subgraph admin["TenantGuard + super_admin"]
+    subgraph admin["TenantGuard + super_admin<br/><i>GET also admitted for regional_admin/branch_admin/finance,<br/>scope-narrowed — create/update stay super_admin-only</i>"]
         settlement["settlement-account"]
     end
 
@@ -184,11 +184,11 @@ graph LR
 | `health` | `GET /health`, `GET /health/db`, `GET /health/redis` | Public |
 | `onboarding` | `POST /onboarding/church` | Session only — you have no church yet |
 | `church` | `GET`/`PATCH /churches/:churchId` | Tenant; `PATCH` also needs super_admin |
-| `region` | CRUD under `/churches/:churchId/regions` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
-| `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only |
+| `region` | CRUD under `/churches/:churchId/regions` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and narrowed to the caller's own scope for every delegated role (`super_admin` sees the whole church) — mutations are **not yet scoped** ([koru-app/koru#96](https://github.com/koru-app/koru/issues/96)) |
+| `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed the same way as `region`; mutations likewise not yet scoped ([koru-app/koru#96](https://github.com/koru-app/koru/issues/96)) |
 | `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; every route except clear-login is also open to `regional_admin`/`branch_admin`, capped by [delegated management](./architecture/delegated-staff-management.md); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
-| `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin |
+| `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin, except `GET`, also open to `regional_admin`/`branch_admin`/`finance` (a deliberate, per-route exception to the class-level lock — see [`settlement-account.controller.spec.ts`](../apps/api/src/settlement-account/settlement-account.controller.spec.ts)); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed (a delegated caller's own branch(es) plus any church-wide account) |
 | `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard |
 | `member` (join) | `GET /join/:churchId/branches`, `POST /join/:churchId` (201 create / 200 update) | Session; `POST` also needs a verified phone |
 
@@ -233,19 +233,25 @@ Success responses return the resource itself, with no wrapper. Every failure con
 
 ### Paginated lists are cursor-based, not offset-based
 
-`GET /staff` is the first endpoint on the shared cursor contract in `packages/shared/src/pagination.ts`:
-`{ items, totalCount, hasNextPage, hasPreviousPage, startCursor, endCursor }`, with a
-`?cursor&direction&limit` query. Not offset (`page`/`pageSize`): offset pagination makes Postgres
-skip `N` rows to reach a deep page, which gets slower the further a client pages, and it isn't
-stable under concurrent inserts/deletes — real concerns at KORU's target scale of a single tenant
-with 30,000+ members and 500+ branches. Every other list endpoint expected to grow past a small,
-fixed size is tracked to move onto this same contract by
-[koru-app/koru#81](https://github.com/koru-app/koru/issues/81); until that lands, treat an
+`Staff`, `Region`, `Branch`, and `SettlementAccount`'s `GET` (list) routes share one cursor contract
+in `packages/shared/src/pagination.ts`: `{ items, totalCount, hasNextPage, hasPreviousPage,
+startCursor, endCursor }`, with a `?cursor&direction&limit` query. Not offset (`page`/`pageSize`):
+offset pagination makes Postgres skip `N` rows to reach a deep page, which gets slower the further a
+client pages, and it isn't stable under concurrent inserts/deletes — real concerns at KORU's target
+scale of a single tenant with 30,000+ members and 500+ branches. `Member`'s list endpoints are
+tracked to move onto this same contract by
+[koru-app/koru#84](https://github.com/koru-app/koru/issues/84); until that lands, treat an
 unpaginated list endpoint as a known gap, not a precedent to copy. See
-[ADR-0006](../apps/api/docs/adr/0006-standard-error-shape-no-envelope.md)'s update and
-`StaffService.list` (`apps/api/src/staff/staff.service.ts`) for the reference implementation,
-including how authorization scoping is pushed into the same `where` clause instead of filtering in
-application code after an unbounded fetch.
+[ADR-0006](../apps/api/docs/adr/0006-standard-error-shape-no-envelope.md)'s update.
+
+The envelope math (cursor validation, `hasNextPage`/`hasPreviousPage`, the empty-page cursor
+fallback) lives in exactly one place, `apps/api/src/common/cursor-pagination.ts`
+(`assertValidDirection`/`assertCursorVisible`/`buildCursorPage`), used by all four services — it is
+deliberately not re-implemented per model. `RegionService.list`/`BranchService.list`/`SettlementAccountService.list`
+(`apps/api/src/{region,branch,settlement-account}/*.service.ts`) are the reference for how
+authorization scoping is pushed into the same `where` clause instead of filtering in application
+code after an unbounded fetch, resolving a caller's region/branch scopes via
+`ScopeService.coveredRegionIds`/`coveredBranchIds`.
 
 ### Money is always integer Kobo
 

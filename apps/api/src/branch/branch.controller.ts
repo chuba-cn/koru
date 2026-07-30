@@ -20,12 +20,19 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { CallerStaff } from '../auth/caller-staff.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { StaffRoles } from '../auth/staff-roles.decorator';
-import { TenantGuard } from '../auth/tenant.guard';
+import { TenantGuard, TenantStaff } from '../auth/tenant.guard';
 import { ErrorResponseDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { BranchDto, CreateBranchDto, ListBranchesQueryDto, UpdateBranchDto } from './branch.dto';
+import {
+  BranchDto,
+  BranchPageDto,
+  CreateBranchDto,
+  ListBranchesQueryDto,
+  UpdateBranchDto,
+} from './branch.dto';
 import { BranchService } from './branch.service';
 
 @ApiTags('branches')
@@ -61,15 +68,24 @@ export class BranchController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List branches of a church, optionally filtered by region' })
-  @ApiOkResponse({ type: BranchDto, isArray: true })
+  @ApiOperation({
+    summary: 'List branches of a church, optionally filtered by region',
+    description:
+      'A delegated caller sees only branches within their own scope — their own branch(es), or every branch inside their region(s). super_admin sees everyone. The optional regionId filter narrows within that scope, it never widens past it. Cursor paginated, ordered by name (id as tiebreaker). Send the response "endCursor" value as "cursor" with "direction=forward" for Next, or the response "startCursor" value as "cursor" with "direction=backward" for previous',
+  })
+  @ApiOkResponse({ type: BranchPageDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
-  @ApiBadRequestResponse({ description: 'Malformed query', type: ErrorResponseDto })
+  @ApiBadRequestResponse({
+    description:
+      'Malformed cursor/limit, cursor not found or not visible to the caller, or direction=backward with no cursor',
+    type: ErrorResponseDto,
+  })
   list(
     @Param('churchId', ParseUUIDPipe) churchId: string,
+    @CallerStaff() caller: TenantStaff,
     @Query(new ZodValidationPipe(ListBranchesQueryDto.schema)) query: ListBranchesQueryDto,
   ) {
-    return this.branchService.list(churchId, query);
+    return this.branchService.list(churchId, caller, query);
   }
 
   @Patch(':id')

@@ -1,15 +1,13 @@
 import type { ScopeInput } from '@koru/shared';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import type { TenantStaff } from './tenant.guard';
 
 @Injectable()
 export class ScopeService {
   constructor(private readonly prisma: PrismaService) {}
 
   async branchInRegion(branchId: string, regionId: string): Promise<boolean> {
-    // A falsy id means malformed input, not "any region/branch" — Prisma treats
-    // an undefined where-value as an omitted filter, which would otherwise widen
-    // this into "does a branch with this id exist at all."
     if (!branchId || !regionId) return false;
 
     const branch = await this.prisma.branch.findFirst({
@@ -34,5 +32,48 @@ export class ScopeService {
     }
 
     return false;
+  }
+
+  // For visibility only — do not use for authority checks. Unlike
+  // scopeCovers, this resolves a branch scope up to its region on purpose.
+  async coveredRegionIds(churchId: string, caller: TenantStaff): Promise<string[]> {
+    const ownRegionIds = caller.scopes
+      .filter((s) => s.scopeType === 'region')
+      .map((s) => s.scopeRefId);
+    const branchIds = caller.scopes
+      .filter((s) => s.scopeType === 'branch')
+      .map((s) => s.scopeRefId);
+
+    const branchRegions = branchIds.length
+      ? await this.prisma.branch.findMany({
+          where: { churchId, id: { in: branchIds } },
+          select: { regionId: true },
+        })
+      : [];
+
+    return [
+      ...new Set([
+        ...ownRegionIds,
+        ...branchRegions.map((b) => b.regionId).filter((id): id is string => id !== null),
+      ]),
+    ];
+  }
+
+  async coveredBranchIds(churchId: string, caller: TenantStaff): Promise<string[]> {
+    const ownBranchIds = caller.scopes
+      .filter((s) => s.scopeType === 'branch')
+      .map((s) => s.scopeRefId);
+    const regionIds = caller.scopes
+      .filter((s) => s.scopeType === 'region')
+      .map((s) => s.scopeRefId);
+
+    const branchesInRegions = regionIds.length
+      ? await this.prisma.branch.findMany({
+          where: { churchId, regionId: { in: regionIds } },
+          select: { id: true },
+        })
+      : [];
+
+    return [...new Set([...ownBranchIds, ...branchesInRegions.map((b) => b.id)])];
   }
 }

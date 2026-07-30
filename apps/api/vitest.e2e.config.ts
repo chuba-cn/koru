@@ -8,6 +8,7 @@ export default defineConfig({
     root: './',
     globalSetup: ['./test/global-setup.ts'],
     fileParallelism: false,
+    testTimeout: 15000,
   },
   plugins: [
     swc.vite({

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PaginationQuerySchema } from './pagination.js';
 
 export const CreateBranchSchema = z.object({
   name: z.string().min(2).max(120),
@@ -19,7 +20,7 @@ export const UpdateBranchSchema = z.object({
   regionId: z.uuid().nullable().optional(),
 });
 
-export const ListBranchesQuerySchema = z.object({
+export const ListBranchesQuerySchema = PaginationQuerySchema.extend({
   regionId: z.uuid().optional(),
 });
 

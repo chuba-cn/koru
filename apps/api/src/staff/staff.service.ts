@@ -17,6 +17,11 @@ import {
 import { AuthUsersService } from '../auth/auth-users.service';
 import { ScopeService } from '../auth/scope.service';
 import type { TenantStaff } from '../auth/tenant.guard';
+import {
+  assertCursorVisible,
+  assertValidDirection,
+  buildCursorPage,
+} from '../common/cursor-pagination';
 import { requireOriginList } from '../config/env';
 import { Prisma, StaffRole } from '../generated/prisma/client';
 import { MailService } from '../notifications/mail.service';
@@ -203,20 +208,7 @@ export class StaffService {
     const callerRegionIds = caller.scopes
       .filter((s) => s.scopeType === 'region')
       .map((s) => s.scopeRefId);
-    const callerBranchIds = caller.scopes
-      .filter((s) => s.scopeType === 'branch')
-      .map((s) => s.scopeRefId);
-
-    const branchesInCallerRegions = callerRegionIds.length
-      ? await this.prisma.branch.findMany({
-          where: { churchId, regionId: { in: callerRegionIds } },
-          select: { id: true },
-        })
-      : [];
-
-    const coveredBranchIds = [
-      ...new Set([...callerBranchIds, ...branchesInCallerRegions.map((branch) => branch.id)]),
-    ];
+    const coveredBranchIds = await this.scopeService.coveredBranchIds(churchId, caller);
 
     return {
       churchId,
@@ -318,25 +310,19 @@ export class StaffService {
     const where = await this.buildStaffVisibilityWhere(churchId, caller);
     const backward = query.direction === 'backward';
 
-    if (backward && !query.cursor) {
-      throw new BadRequestException('direction=backward requires a cursor (use "startCursor")');
-    }
-
-    if (query.cursor) {
-      // Prisma's cursor subquery is keyed only on the cursor field (id) — it
-      // does not re-apply `where`, so an unchecked cursor is a positional
-      // oracle for a row outside this caller's tenant/scope. AND, not a
-      // spread: `where` can itself already carry an `id` key (the fail-closed
-      // `{ id: { in: [] } }` branch in buildStaffVisibilityWhere), and
-      // spreading `id` after it would silently overwrite that guard.
-      const cursorRow = await this.prisma.staff.findFirst({
-        where: { AND: [where, { id: query.cursor }] },
+    assertValidDirection(query);
+    // Prisma's cursor subquery is keyed only on the cursor field (id) — it
+    // does not re-apply `where`, so an unchecked cursor is a positional
+    // oracle for a row outside this caller's tenant/scope. AND, not a
+    // spread: `where` can itself already carry an `id` key (the fail-closed
+    // `{ id: { in: [] } }` branch in buildStaffVisibilityWhere), and
+    // spreading `id` after it would silently overwrite that guard.
+    await assertCursorVisible(query.cursor, (cursor) =>
+      this.prisma.staff.findFirst({
+        where: { AND: [where, { id: cursor }] },
         select: { id: true },
-      });
-      if (!cursorRow) {
-        throw new BadRequestException('cursor not found');
-      }
-    }
+      }),
+    );
 
     const [totalCount, rows] = await Promise.all([
       this.prisma.staff.count({ where }),
@@ -351,26 +337,7 @@ export class StaffService {
       }),
     ]);
 
-    const hasMore = rows.length > query.limit;
-    const page = rows.slice(0, query.limit);
-    const ordered = backward ? page.reverse() : page;
-    const items = ordered.map(withStatus);
-
-    const hasNextPage = backward ? Boolean(query.cursor) : hasMore;
-    const hasPreviousPage = backward ? hasMore : Boolean(query.cursor);
-
-    // An empty page can still have a real edge to page back toward — e.g. a
-    // valid cursor pointing at the last row, whose successors got deleted.
-    // query.cursor is safe to fall back to here: it was already checked
-    // above to exist and be visible to this caller.
-    return {
-      items,
-      totalCount,
-      hasNextPage,
-      hasPreviousPage,
-      startCursor: items[0]?.id ?? (hasPreviousPage ? (query.cursor ?? null) : null),
-      endCursor: items[items.length - 1]?.id ?? (hasNextPage ? (query.cursor ?? null) : null),
-    };
+    return buildCursorPage(rows.map(withStatus), totalCount, query);
   }
 
   async findById(churchId: string, id: string) {

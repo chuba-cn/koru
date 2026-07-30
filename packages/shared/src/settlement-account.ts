@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PaginationQuerySchema } from './pagination.js';
 
 const NubanSchema = z.string().regex(/^\d{10}$/, 'account number must be exactly 10 digits');
 
@@ -13,7 +14,7 @@ export const UpdateSettlementAccountSchema = z.object({
   label: z.string().min(2).max(120),
 });
 
-export const ListSettlementAccountsQuerySchema = z.object({
+export const ListSettlementAccountsQuerySchema = PaginationQuerySchema.extend({
   branchId: z.uuid().optional(),
 });
 

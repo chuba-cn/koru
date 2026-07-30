@@ -35,10 +35,11 @@ describe('Region (e2e)', () => {
       .set('Cookie', cookie)
       .expect(200);
 
-    expect(list.body).toHaveLength(1);
-    expect(list.body[0].id).toBe(regionId);
-    expect(list.body[0].name).toBe('Abuja (FCT)');
-    expect(list.body[0].state).toBe('FCT');
+    expect(list.body.items).toHaveLength(1);
+    expect(list.body.items[0].id).toBe(regionId);
+    expect(list.body.items[0].name).toBe('Abuja (FCT)');
+    expect(list.body.items[0].state).toBe('FCT');
+    expect(list.body.totalCount).toBe(1);
   });
 
   it('renames a region', async () => {
@@ -55,7 +56,7 @@ describe('Region (e2e)', () => {
       .set('Cookie', cookie)
       .expect(200);
 
-    expect(list.body[0].name).toBe('Abuja Metro');
+    expect(list.body.items[0].name).toBe('Abuja Metro');
   });
 
   it('rejects a duplicate region name within the same church, allows it in another church', async () => {
@@ -94,7 +95,7 @@ describe('Region (e2e)', () => {
       .set('Cookie', cookie)
       .expect(200);
 
-    expect(list.body).toHaveLength(0);
+    expect(list.body.items).toHaveLength(0);
   });
 
   it('refuses to delete a region that still has branches', async () => {
@@ -121,7 +122,7 @@ describe('Region (e2e)', () => {
       .set('Cookie', bob.cookie)
       .expect(200);
 
-    expect(list.body).toHaveLength(0);
+    expect(list.body.items).toHaveLength(0);
 
     await request(app.getHttpServer())
       .patch(`/churches/${bob.churchId}/regions/${alice.regionId}`)
@@ -138,5 +139,61 @@ describe('Region (e2e)', () => {
       .set('Cookie', cookie)
       .send({ name: 'Ghost' })
       .expect(404);
+  });
+
+  it('scopes a regional_admin to their own region, and rejects an out-of-scope cursor', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const otherRegion = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Lagos', state: 'Lagos' })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    const list = await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .expect(200);
+
+    const ids = list.body.items.map((r: { id: string }) => r.id);
+    expect(ids).toContain(alice.regionId);
+    expect(ids).not.toContain(otherRegion.body.id);
+
+    await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/regions`)
+      .query({ cursor: otherRegion.body.id })
+      .set('Cookie', alice.cookie)
+      .expect(400);
+  });
+
+  it('lets a branch-scoped caller see the region containing their branch', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const branch = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja', regionId: alice.regionId })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'branch_admin',
+        scopes: { create: [{ scopeType: 'branch', scopeRefId: branch.body.id }] },
+      },
+    });
+
+    const list = await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .expect(200);
+
+    expect(list.body.items.map((r: { id: string }) => r.id)).toContain(alice.regionId);
   });
 });

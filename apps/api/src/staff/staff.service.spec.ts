@@ -54,7 +54,12 @@ function build(overrides: {
       // buildStaffVisibilityWhere resolves a caller's region scopes down to the
       // branches inside them ({ regionId: { in } }). Each takes a different path.
       findMany: vi.fn(
-        ({ where }: { where: { id?: { in: string[] }; regionId?: { in: string[] } } }) => {
+        ({
+          where,
+        }: {
+          where: { id?: { in: string[] }; regionId?: { in: string[] }; churchId?: string };
+          select?: { id: true };
+        }) => {
           if (where.regionId) {
             return Promise.resolve(
               where.regionId.in.map((regionId) => ({ id: `branch-in-${regionId}` })),
@@ -117,6 +122,26 @@ function build(overrides: {
       (_caller: unknown, _scope: { scopeRefId: string }): Promise<boolean> => Promise.resolve(true),
     ),
     branchInRegion: vi.fn(() => Promise.resolve(true)),
+    // Mirrors the real coveredBranchIds so the query-count tests below stay valid.
+    coveredBranchIds: vi.fn(
+      async (churchId: string, caller: { scopes: { scopeType: string; scopeRefId: string }[] }) => {
+        const ownBranchIds = caller.scopes
+          .filter((s) => s.scopeType === 'branch')
+          .map((s) => s.scopeRefId);
+        const regionIds = caller.scopes
+          .filter((s) => s.scopeType === 'region')
+          .map((s) => s.scopeRefId);
+        const branchesInRegions = regionIds.length
+          ? await prisma.branch.findMany({
+              where: { churchId, regionId: { in: regionIds } },
+              select: { id: true },
+            })
+          : [];
+        return [
+          ...new Set([...ownBranchIds, ...branchesInRegions.map((b: { id: string }) => b.id)]),
+        ];
+      },
+    ),
   };
 
   const mail = {

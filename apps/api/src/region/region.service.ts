@@ -1,11 +1,21 @@
-import type { CreateRegionInput, UpdateRegionInput } from '@koru/shared';
+import type { CreateRegionInput, PaginationQuery, UpdateRegionInput } from '@koru/shared';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ScopeService } from '../auth/scope.service';
+import type { TenantStaff } from '../auth/tenant.guard';
+import {
+  assertCursorVisible,
+  assertValidDirection,
+  buildCursorPage,
+} from '../common/cursor-pagination';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class RegionService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scopeService: ScopeService,
+  ) {}
 
   private async assertChurchExists(churchId: string) {
     const church = await this.prisma.church.findUnique({ where: { id: churchId } });
@@ -27,9 +37,35 @@ export class RegionService {
     }
   }
 
-  async list(churchId: string) {
+  async list(churchId: string, caller: TenantStaff, query: PaginationQuery) {
     await this.assertChurchExists(churchId);
-    return this.prisma.region.findMany({ where: { churchId }, orderBy: { name: 'asc' } });
+
+    const scopeWhere: Prisma.RegionWhereInput =
+      caller.role === 'super_admin'
+        ? {}
+        : { id: { in: await this.scopeService.coveredRegionIds(churchId, caller) } };
+    const where: Prisma.RegionWhereInput = { AND: [{ churchId }, scopeWhere] };
+
+    assertValidDirection(query);
+    await assertCursorVisible(query.cursor, (cursor) =>
+      this.prisma.region.findFirst({
+        where: { AND: [where, { id: cursor }] },
+        select: { id: true },
+      }),
+    );
+
+    const backward = query.direction === 'backward';
+    const [totalCount, rows] = await Promise.all([
+      this.prisma.region.count({ where }),
+      this.prisma.region.findMany({
+        where,
+        orderBy: backward ? [{ name: 'desc' }, { id: 'desc' }] : [{ name: 'asc' }, { id: 'asc' }],
+        take: query.limit + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      }),
+    ]);
+
+    return buildCursorPage(rows, totalCount, query);
   }
 
   async findById(churchId: string, id: string) {
