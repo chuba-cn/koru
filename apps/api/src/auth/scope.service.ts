@@ -1,5 +1,5 @@
 import type { ScopeInput } from '@koru/shared';
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { TenantStaff } from './tenant.guard';
 
@@ -34,7 +34,7 @@ export class ScopeService {
     return false;
   }
 
-  // For visibility only — do not use for authority checks. Unlike
+  // For visibility only: do not use for authority checks. Unlike
   // scopeCovers, this resolves a branch scope up to its region on purpose.
   async coveredRegionIds(churchId: string, caller: TenantStaff): Promise<string[]> {
     const ownRegionIds = caller.scopes
@@ -75,5 +75,18 @@ export class ScopeService {
       : [];
 
     return [...new Set([...ownBranchIds, ...branchesInRegions.map((b) => b.id)])];
+  }
+
+  /**
+   * Authority check for acting on a region/branch, not merely seeing it. super_admin
+   * covers the whole church. Everyone else must have a scope that covers the target,
+   * via the one-directional scopeCovers (a branch scope never reaches up to a region).
+   */
+  async assertCanActOnScope(caller: TenantStaff, target: ScopeInput): Promise<void> {
+    if (caller.role === 'super_admin') return;
+
+    if (!(await this.scopeCovers(caller.scopes, target))) {
+      throw new ForbiddenException(`A ${caller.role} cannot act on this ${target.scopeType}`);
+    }
   }
 }

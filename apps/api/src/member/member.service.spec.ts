@@ -8,6 +8,7 @@ const BRANCH = 'branch-1';
 const CALLER = 'user-caller';
 const PHONE = '+2348012345600';
 const INPUT = { fullName: 'Ada Lovelace' };
+const QUERY = { limit: 50, direction: 'forward' as const };
 
 function fakePrisma() {
   const rows = new Map<
@@ -17,6 +18,16 @@ function fakePrisma() {
 
   const pledgeRows: Array<{ userId: string; churchId: string; [key: string]: unknown }> = [];
   const paymentRows: Array<{ userId: string; churchId: string; [key: string]: unknown }> = [];
+
+  const memberByUser = (userId: string) => [...rows.values()].filter((r) => r.userId === userId);
+  const pledgesFor = (where: { member: { userId: string; churchId: string } }) =>
+    pledgeRows.filter(
+      (r) => r.userId === where.member.userId && r.churchId === where.member.churchId,
+    );
+  const paymentsFor = (where: { member: { userId: string; churchId: string } }) =>
+    paymentRows.filter(
+      (r) => r.userId === where.member.userId && r.churchId === where.member.churchId,
+    );
 
   return {
     church: {
@@ -28,6 +39,8 @@ function fakePrisma() {
       findFirst: vi.fn(({ where }: { where: { id: string; churchId: string } }) =>
         Promise.resolve(where.id === BRANCH && where.churchId === CHURCH ? { id: BRANCH } : null),
       ),
+      count: vi.fn(() => Promise.resolve(1)),
+      findMany: vi.fn(() => Promise.resolve([{ id: BRANCH, name: 'Wuse' }])),
     },
     member: {
       findUnique: vi.fn(
@@ -40,8 +53,12 @@ function fakePrisma() {
           return Promise.resolve(row ?? null);
         },
       ),
+      findFirst: vi.fn(() => Promise.resolve(null)),
+      count: vi.fn(({ where }: { where: { userId: string } }) =>
+        Promise.resolve(memberByUser(where.userId).length),
+      ),
       findMany: vi.fn(({ where }: { where: { userId: string } }) =>
-        Promise.resolve([...rows.values()].filter((r) => r.userId === where.userId)),
+        Promise.resolve(memberByUser(where.userId)),
       ),
       create: vi.fn(({ data }: { data: { churchId: string; phone: string; userId: string } }) => {
         const row = { id: `member-${rows.size + 1}`, ...data };
@@ -56,20 +73,22 @@ function fakePrisma() {
       }),
     },
     pledge: {
-      findMany: vi.fn(({ where }: { where: { member: { userId: string; churchId: string } } }) => {
-        const matches = pledgeRows.filter(
-          (r) => r.userId === where.member.userId && r.churchId === where.member.churchId,
-        );
-        return Promise.resolve(matches.map(({ userId: _u, churchId: _c, ...rest }) => rest));
-      }),
+      findFirst: vi.fn(() => Promise.resolve(null)),
+      count: vi.fn(({ where }: { where: { member: { userId: string; churchId: string } } }) =>
+        Promise.resolve(pledgesFor(where).length),
+      ),
+      findMany: vi.fn(({ where }: { where: { member: { userId: string; churchId: string } } }) =>
+        Promise.resolve(pledgesFor(where).map(({ userId: _u, churchId: _c, ...rest }) => rest)),
+      ),
     },
     payment: {
-      findMany: vi.fn(({ where }: { where: { member: { userId: string; churchId: string } } }) => {
-        const matches = paymentRows.filter(
-          (r) => r.userId === where.member.userId && r.churchId === where.member.churchId,
-        );
-        return Promise.resolve(matches.map(({ userId: _u, churchId: _c, ...rest }) => rest));
-      }),
+      findFirst: vi.fn(() => Promise.resolve(null)),
+      count: vi.fn(({ where }: { where: { member: { userId: string; churchId: string } } }) =>
+        Promise.resolve(paymentsFor(where).length),
+      ),
+      findMany: vi.fn(({ where }: { where: { member: { userId: string; churchId: string } } }) =>
+        Promise.resolve(paymentsFor(where).map(({ userId: _u, churchId: _c, ...rest }) => rest)),
+      ),
     },
     seed: (row: { id: string; churchId: string; phone: string; userId: string | null }) =>
       rows.set(row.id, row),
@@ -84,12 +103,24 @@ describe('MemberService', () => {
   describe('listBranches', () => {
     it('rejects when the church does not exist', async () => {
       const service = new MemberService(fakePrisma() as never);
-      await expect(service.listBranches('no-such-church')).rejects.toThrow(NotFoundException);
+      await expect(service.listBranches('no-such-church', QUERY)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('returns a paginated envelope of branches', async () => {
+      const service = new MemberService(fakePrisma() as never);
+
+      const page = await service.listBranches(CHURCH, QUERY);
+
+      expect(page.items).toEqual([{ id: BRANCH, name: 'Wuse' }]);
+      expect(page).toHaveProperty('hasNextPage');
+      expect(page).toHaveProperty('endCursor');
     });
   });
 
   describe('myProfile', () => {
-    it('returns only the memberships belonging to this login', async () => {
+    it('returns only the memberships belonging to this login, paginated', async () => {
       const prisma = fakePrisma();
       prisma.seed({ id: 'member-1', churchId: CHURCH, phone: PHONE, userId: CALLER });
       prisma.seed({
@@ -100,10 +131,10 @@ describe('MemberService', () => {
       });
       const service = new MemberService(prisma as never);
 
-      const profile = await service.myProfile(CALLER, 'Ada', PHONE);
+      const profile = await service.myProfile(CALLER, 'Ada', PHONE, QUERY);
 
-      expect(profile.memberships).toHaveLength(1);
-      expect(profile.memberships[0]?.id).toBe('member-1');
+      expect(profile.memberships.items).toHaveLength(1);
+      expect(profile.memberships.items[0]?.id).toBe('member-1');
     });
   });
 
@@ -203,14 +234,24 @@ describe('MemberService', () => {
       const prisma = fakePrisma();
       const service = new MemberService(prisma as never);
 
-      await service.myPledges(CALLER, CHURCH);
+      await service.myPledges(CALLER, CHURCH, QUERY);
 
       expect(prisma.pledge.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { member: { userId: CALLER, churchId: CHURCH } } }),
       );
     });
 
-    it('converts the BigInt pledgeAmountKobo to a plain number', async () => {
+    it('returns a paginated envelope, not a bare array', async () => {
+      const service = new MemberService(fakePrisma() as never);
+
+      const page = await service.myPledges(CALLER, CHURCH, QUERY);
+
+      expect(page).toHaveProperty('items');
+      expect(page).toHaveProperty('hasNextPage');
+      expect(Array.isArray(page.items)).toBe(true);
+    });
+
+    it('converts the BigInt pledgeAmountKobo to a plain number on each item', async () => {
       const prisma = fakePrisma();
       prisma.seedPledge({
         userId: CALLER,
@@ -226,10 +267,10 @@ describe('MemberService', () => {
       });
       const service = new MemberService(prisma as never);
 
-      const [pledge] = await service.myPledges(CALLER, CHURCH);
+      const { items } = await service.myPledges(CALLER, CHURCH, QUERY);
 
-      expect(pledge?.pledgeAmountKobo).toBe(5_000_000);
-      expect(typeof pledge?.pledgeAmountKobo).toBe('number');
+      expect(items[0]?.pledgeAmountKobo).toBe(5_000_000);
+      expect(typeof items[0]?.pledgeAmountKobo).toBe('number');
     });
 
     /**
@@ -253,7 +294,7 @@ describe('MemberService', () => {
       });
       const service = new MemberService(prisma as never);
 
-      await expect(service.myPledges(CALLER, CHURCH)).rejects.toThrow(RangeError);
+      await expect(service.myPledges(CALLER, CHURCH, QUERY)).rejects.toThrow(RangeError);
     });
   });
 
@@ -262,14 +303,14 @@ describe('MemberService', () => {
       const prisma = fakePrisma();
       const service = new MemberService(prisma as never);
 
-      await service.myPayments(CALLER, CHURCH);
+      await service.myPayments(CALLER, CHURCH, QUERY);
 
       expect(prisma.payment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { member: { userId: CALLER, churchId: CHURCH } } }),
       );
     });
 
-    it('converts the BigInt amountKobo to a plain number', async () => {
+    it('converts the BigInt amountKobo to a plain number on each item', async () => {
       const prisma = fakePrisma();
       prisma.seedPayment({
         userId: CALLER,
@@ -286,10 +327,10 @@ describe('MemberService', () => {
       });
       const service = new MemberService(prisma as never);
 
-      const [payment] = await service.myPayments(CALLER, CHURCH);
+      const { items } = await service.myPayments(CALLER, CHURCH, QUERY);
 
-      expect(payment?.amountKobo).toBe(2_000_000);
-      expect(typeof payment?.amountKobo).toBe('number');
+      expect(items[0]?.amountKobo).toBe(2_000_000);
+      expect(typeof items[0]?.amountKobo).toBe('number');
     });
   });
 });

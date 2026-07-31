@@ -1,3 +1,4 @@
+import type { PaginationQuery } from '@koru/shared';
 import { bigintToKobo, type JoinMemberInput } from '@koru/shared';
 import {
   BadRequestException,
@@ -5,6 +6,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  assertCursorVisible,
+  assertValidDirection,
+  buildCursorPage,
+} from '../common/cursor-pagination';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -51,23 +57,65 @@ export class MemberService {
     if (!church) throw new NotFoundException(`Church ${churchId} not found`);
   }
 
-  async listBranches(churchId: string) {
+  async listBranches(churchId: string, query: PaginationQuery) {
     await this.assertChurchExists(churchId);
-    return this.prisma.branch.findMany({
-      where: { churchId },
-      select: { id: true, name: true },
-      orderBy: { name: 'asc' },
-    });
+
+    const where: Prisma.BranchWhereInput = { churchId };
+
+    assertValidDirection(query);
+    await assertCursorVisible(query.cursor, (cursor) =>
+      this.prisma.branch.findFirst({
+        where: { AND: [where, { id: cursor }] },
+        select: { id: true },
+      }),
+    );
+
+    const backward = query.direction === 'backward';
+    const [totalCount, rows] = await Promise.all([
+      this.prisma.branch.count({ where }),
+      this.prisma.branch.findMany({
+        where,
+        select: { id: true, name: true },
+        orderBy: backward ? [{ name: 'desc' }, { id: 'desc' }] : [{ name: 'asc' }, { id: 'asc' }],
+        take: query.limit + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      }),
+    ]);
+
+    return buildCursorPage(rows, totalCount, query);
   }
 
-  async myProfile(userId: string, name: string, phoneNumber: string | null) {
-    const memberships = await this.prisma.member.findMany({
-      where: { userId },
-      select: MEMBER_SELECT,
-      orderBy: { createdAt: 'asc' },
-    });
+  async myProfile(
+    userId: string,
+    name: string,
+    phoneNumber: string | null,
+    query: PaginationQuery,
+  ) {
+    const where: Prisma.MemberWhereInput = { userId };
 
-    return { name, phoneNumber, memberships };
+    assertValidDirection(query);
+    await assertCursorVisible(query.cursor, (cursor) =>
+      this.prisma.member.findFirst({
+        where: { AND: [where, { id: cursor }] },
+        select: { id: true },
+      }),
+    );
+
+    const backward = query.direction === 'backward';
+    const [totalCount, rows] = await Promise.all([
+      this.prisma.member.count({ where }),
+      this.prisma.member.findMany({
+        where,
+        select: MEMBER_SELECT,
+        orderBy: backward
+          ? [{ createdAt: 'desc' }, { id: 'desc' }]
+          : [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: query.limit + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      }),
+    ]);
+
+    return { name, phoneNumber, memberships: buildCursorPage(rows, totalCount, query) };
   }
 
   /**
@@ -140,29 +188,73 @@ export class MemberService {
     return { member, created: false };
   }
 
-  async myPledges(userId: string, churchId: string) {
-    const pledges = await this.prisma.pledge.findMany({
-      where: { member: { userId, churchId } },
-      select: PLEDGE_HISTORY_SELECT,
-      orderBy: { createdAt: 'desc' },
-    });
+  async myPledges(userId: string, churchId: string, query: PaginationQuery) {
+    const where: Prisma.PledgeWhereInput = { member: { userId, churchId } };
 
-    return pledges.map((pledge) => ({
-      ...pledge,
-      pledgeAmountKobo: bigintToKobo(pledge.pledgeAmountKobo),
-    }));
+    assertValidDirection(query);
+    await assertCursorVisible(query.cursor, (cursor) =>
+      this.prisma.pledge.findFirst({
+        where: { AND: [where, { id: cursor }] },
+        select: { id: true },
+      }),
+    );
+
+    const backward = query.direction === 'backward';
+    const [totalCount, rows] = await Promise.all([
+      this.prisma.pledge.count({ where }),
+      this.prisma.pledge.findMany({
+        where,
+        select: PLEDGE_HISTORY_SELECT,
+        orderBy: backward
+          ? [{ createdAt: 'asc' }, { id: 'asc' }]
+          : [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: query.limit + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      }),
+    ]);
+
+    const page = buildCursorPage(rows, totalCount, query);
+    return {
+      ...page,
+      items: page.items.map((pledge) => ({
+        ...pledge,
+        pledgeAmountKobo: bigintToKobo(pledge.pledgeAmountKobo),
+      })),
+    };
   }
 
-  async myPayments(userId: string, churchId: string) {
-    const payments = await this.prisma.payment.findMany({
-      where: { member: { userId, churchId } },
-      select: PAYMENT_HISTORY_SELECT,
-      orderBy: { createdAt: 'desc' },
-    });
+  async myPayments(userId: string, churchId: string, query: PaginationQuery) {
+    const where: Prisma.PaymentWhereInput = { member: { userId, churchId } };
 
-    return payments.map((payment) => ({
-      ...payment,
-      amountKobo: bigintToKobo(payment.amountKobo),
-    }));
+    assertValidDirection(query);
+    await assertCursorVisible(query.cursor, (cursor) =>
+      this.prisma.payment.findFirst({
+        where: { AND: [where, { id: cursor }] },
+        select: { id: true },
+      }),
+    );
+
+    const backward = query.direction === 'backward';
+    const [totalCount, rows] = await Promise.all([
+      this.prisma.payment.count({ where }),
+      this.prisma.payment.findMany({
+        where,
+        select: PAYMENT_HISTORY_SELECT,
+        orderBy: backward
+          ? [{ createdAt: 'asc' }, { id: 'asc' }]
+          : [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: query.limit + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      }),
+    ]);
+
+    const page = buildCursorPage(rows, totalCount, query);
+    return {
+      ...page,
+      items: page.items.map((payment) => ({
+        ...payment,
+        amountKobo: bigintToKobo(payment.amountKobo),
+      })),
+    };
   }
 }

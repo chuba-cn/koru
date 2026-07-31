@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { ScopeService } from './scope.service';
 import type { TenantStaff } from './tenant.guard';
@@ -302,6 +303,63 @@ describe('ScopeService', () => {
 
       expect(ids).toEqual([]);
       expect(prisma.branch.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * #96: the authority check for mutating a region/branch. It is deliberately
+   * built on the one-directional scopeCovers, not the visibility helpers, so a
+   * branch-scoped caller can never gain authority over its containing region.
+   */
+  describe('assertCanActOnScope', () => {
+    const superAdmin: TenantStaff = {
+      id: 'caller-1',
+      churchId: CHURCH,
+      role: 'super_admin',
+      scopes: [],
+    };
+
+    it('lets a super_admin act on anything, without consulting scopes', async () => {
+      const prisma = fakePrisma();
+      const service = new ScopeService(prisma as never);
+
+      await expect(
+        service.assertCanActOnScope(superAdmin, { scopeType: 'region', scopeRefId: REGION }),
+      ).resolves.toBeUndefined();
+      expect(prisma.branch.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('lets a delegate act on a scope they cover', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+
+      await expect(
+        service.assertCanActOnScope(callerWith([{ scopeType: 'region', scopeRefId: REGION }]), {
+          scopeType: 'region',
+          scopeRefId: REGION,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('throws Forbidden when the delegate does not cover the target', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+
+      await expect(
+        service.assertCanActOnScope(
+          callerWith([{ scopeType: 'region', scopeRefId: OTHER_REGION }]),
+          { scopeType: 'region', scopeRefId: REGION },
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('refuses a branch-scoped caller acting on their containing region — the #96 escalation', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+
+      await expect(
+        service.assertCanActOnScope(
+          callerWith([{ scopeType: 'branch', scopeRefId: BRANCH_IN_REGION }]),
+          { scopeType: 'region', scopeRefId: REGION },
+        ),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

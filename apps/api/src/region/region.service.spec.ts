@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { TenantStaff } from '../auth/tenant.guard';
 import { Prisma } from '../generated/prisma/client';
@@ -29,16 +34,24 @@ function fakePrisma() {
       ),
       findMany: vi.fn(() => Promise.resolve([REGION])),
       count: vi.fn(() => Promise.resolve(1)),
+      update: vi.fn(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ ...REGION, ...data }),
+      ),
       delete: vi.fn(() => Promise.resolve(REGION)),
     },
     branch: { count: vi.fn(() => Promise.resolve(0)) },
   };
 }
 
-function fakeScopeService(overrides: { regionIds?: string[] } = {}) {
+function fakeScopeService(overrides: { regionIds?: string[]; denyAct?: boolean } = {}) {
   return {
     coveredRegionIds: vi.fn(() => Promise.resolve(overrides.regionIds ?? [])),
     coveredBranchIds: vi.fn(() => Promise.resolve([])),
+    assertCanActOnScope: vi.fn(() =>
+      overrides.denyAct
+        ? Promise.reject(new ForbiddenException('outside scope'))
+        : Promise.resolve(),
+    ),
   };
 }
 
@@ -176,8 +189,12 @@ describe('RegionService', () => {
       prisma.branch.count.mockResolvedValue(3);
       const service = new RegionService(prisma as never, fakeScopeService() as never);
 
-      await expect(service.remove(CHURCH, REGION.id)).rejects.toThrow(ConflictException);
-      await expect(service.remove(CHURCH, REGION.id)).rejects.toThrow(/branch/);
+      await expect(service.remove(CHURCH, REGION.id, callerWith('super_admin'))).rejects.toThrow(
+        ConflictException,
+      );
+      await expect(service.remove(CHURCH, REGION.id, callerWith('super_admin'))).rejects.toThrow(
+        /branch/,
+      );
       expect(prisma.region.delete).not.toHaveBeenCalled();
     });
 
@@ -185,7 +202,7 @@ describe('RegionService', () => {
       const prisma = fakePrisma();
       const service = new RegionService(prisma as never, fakeScopeService() as never);
 
-      await service.remove(CHURCH, REGION.id);
+      await service.remove(CHURCH, REGION.id, callerWith('super_admin'));
 
       expect(prisma.region.delete).toHaveBeenCalledWith({ where: { id: REGION.id } });
     });
@@ -194,8 +211,59 @@ describe('RegionService', () => {
       const prisma = fakePrisma();
       const service = new RegionService(prisma as never, fakeScopeService() as never);
 
-      await expect(service.remove('another-church', REGION.id)).rejects.toThrow(NotFoundException);
+      await expect(
+        service.remove('another-church', REGION.id, callerWith('super_admin')),
+      ).rejects.toThrow(NotFoundException);
       expect(prisma.region.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * #96: update/remove must refuse a delegated caller acting outside their scope.
+   * The one-directional authority itself is proven in scope.service.spec.ts and
+   * end-to-end; here we prove the service asks, and honours the verdict, before
+   * it touches a row.
+   */
+  describe('scope enforcement (#96)', () => {
+    const outsider = callerWith('branch_admin', [{ scopeType: 'branch', scopeRefId: 'branch-x' }]);
+
+    it('refuses update when the caller is outside scope, before writing', async () => {
+      const prisma = fakePrisma();
+      const service = new RegionService(
+        prisma as never,
+        fakeScopeService({ denyAct: true }) as never,
+      );
+
+      await expect(
+        service.update(CHURCH, REGION.id, outsider, { name: 'Renamed' }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.region.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses remove when the caller is outside scope, before deleting', async () => {
+      const prisma = fakePrisma();
+      const service = new RegionService(
+        prisma as never,
+        fakeScopeService({ denyAct: true }) as never,
+      );
+
+      await expect(service.remove(CHURCH, REGION.id, outsider)).rejects.toThrow(ForbiddenException);
+      expect(prisma.region.delete).not.toHaveBeenCalled();
+    });
+
+    it('checks scope against the region being acted on, then proceeds', async () => {
+      const prisma = fakePrisma();
+      const scope = fakeScopeService();
+      const service = new RegionService(prisma as never, scope as never);
+      const caller = callerWith('regional_admin', [{ scopeType: 'region', scopeRefId: REGION.id }]);
+
+      await service.update(CHURCH, REGION.id, caller, { name: 'Renamed' });
+
+      expect(scope.assertCanActOnScope).toHaveBeenCalledWith(caller, {
+        scopeType: 'region',
+        scopeRefId: REGION.id,
+      });
+      expect(prisma.region.update).toHaveBeenCalled();
     });
   });
 });

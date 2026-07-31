@@ -44,7 +44,39 @@ describe('Member phone OTP + join (e2e)', () => {
       .get(`/join/${church.churchId}/branches`)
       .set('Cookie', cookie)
       .expect(200);
-    expect(res.body).toEqual([expect.objectContaining({ name: 'Main Branch' })]);
+    expect(res.body.items).toEqual([expect.objectContaining({ name: 'Main Branch' })]);
+  });
+
+  /**
+   * #84: the join-form branch directory paginates too, not just the staff-facing
+   * branch list. A stable walk across a page boundary must repeat no row.
+   */
+  it('paginates the join-form branch directory with a stable page boundary', async () => {
+    const church = await createAuthedChurchWithRegion(app);
+    for (const name of ['Ikeja', 'Garki', 'Wuse']) {
+      await prisma.branch.create({ data: { churchId: church.churchId, name } });
+    }
+    const { cookie } = await signInMemberByPhone(app, '+2348012345699');
+
+    const first = await request(app.getHttpServer())
+      .get(`/join/${church.churchId}/branches`)
+      .query({ limit: 2 })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(first.body.items).toHaveLength(2);
+    expect(first.body.hasNextPage).toBe(true);
+
+    const second = await request(app.getHttpServer())
+      .get(`/join/${church.churchId}/branches`)
+      .query({ limit: 2, cursor: first.body.endCursor })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    const firstIds = first.body.items.map((b: { id: string }) => b.id);
+    const secondIds = second.body.items.map((b: { id: string }) => b.id);
+    expect(secondIds.some((id: string) => firstIds.includes(id))).toBe(false);
+    expect(new Set([...firstIds, ...secondIds]).size).toBe(3);
   });
 
   it('creates a Member on first join, with no branch selected', async () => {
@@ -134,7 +166,7 @@ describe('Member phone OTP + join (e2e)', () => {
     const { cookie } = await signInMemberByPhone(app, phone);
 
     const empty = await request(app.getHttpServer()).get('/me').set('Cookie', cookie).expect(200);
-    expect(empty.body.memberships).toEqual([]);
+    expect(empty.body.memberships.items).toEqual([]);
 
     await request(app.getHttpServer())
       .post(`/join/${churchA.churchId}`)
@@ -148,9 +180,9 @@ describe('Member phone OTP + join (e2e)', () => {
       .expect(201);
 
     const res = await request(app.getHttpServer()).get('/me').set('Cookie', cookie).expect(200);
-    expect(res.body.memberships).toHaveLength(2);
+    expect(res.body.memberships.items).toHaveLength(2);
     expect(res.body.phoneNumber).toBe(phone);
-    expect(res.body.memberships[0]).not.toHaveProperty('userId');
+    expect(res.body.memberships.items[0]).not.toHaveProperty('userId');
   });
 
   it('403s a session with no verified phone attempting to join', async () => {
