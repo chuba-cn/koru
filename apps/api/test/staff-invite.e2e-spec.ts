@@ -29,7 +29,7 @@ describe('Staff invitations (e2e)', () => {
   });
 
   beforeEach(async () => {
-    await truncateAll(prisma);
+    await truncateAll(app);
   });
 
   afterAll(async () => {

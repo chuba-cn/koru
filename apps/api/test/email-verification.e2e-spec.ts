@@ -30,7 +30,7 @@ describe('Email verification and password reset (e2e)', () => {
   });
 
   beforeEach(async () => {
-    await truncateAll(prisma);
+    await truncateAll(app);
   });
 
   afterAll(async () => {

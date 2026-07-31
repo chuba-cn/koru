@@ -14,6 +14,12 @@ pnpm --filter @koru/api test:e2e      # needs Postgres: docker compose up -d
 pnpm --filter @koru/api test:unit:ui  # browser runner with a coverage tab
 ```
 
+The e2e run needs `apps/api/.env.test`, gitignored, one-time setup:
+`cp apps/api/.env.test.example apps/api/.env.test`, then point `DATABASE_URL`
+at your own local Postgres. Use a separate Redis db (`.../1`, not `.../0`) —
+e2e clears the whole email queue on every test, and db 0 is what a locally
+running `pnpm dev` uses.
+
 **A unit test must pass with Postgres stopped and no `.env` file present.** That is the line between the two layers. If a test needs a database, it is an end-to-end test and belongs in `test/`.
 
 One subtlety worth knowing, because it caught this suite out. `auth.ts` validates its configuration at *import* time, and any spec touching a controller pulls it in transitively. So the unit layer needs those variables **present**, though it never opens a connection with them — `PrismaClient` does not dial the database until a query is issued. They are declared in `apps/api/vitest.config.ts` under `test.env` rather than read from a local `.env`, because CI has no `.env`. Relying on the local file made the suite pass on a developer machine and fail on a clean runner.
