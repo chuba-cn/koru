@@ -14,17 +14,20 @@ const EMAIL_QUEUE_DRAIN_TIMEOUT_MS = 5000;
  */
 async function resetEmailQueue(queue: Queue) {
   await queue.pause();
-  const start = Date.now();
-  while ((await queue.getJobCounts('active')).active > 0) {
-    if (Date.now() - start > EMAIL_QUEUE_DRAIN_TIMEOUT_MS) {
-      throw new Error(
-        `Email queue still has an active job after ${EMAIL_QUEUE_DRAIN_TIMEOUT_MS}ms — it's stuck, not just slow.`,
-      );
+  try {
+    const start = Date.now();
+    while ((await queue.getJobCounts('active')).active > 0) {
+      if (Date.now() - start > EMAIL_QUEUE_DRAIN_TIMEOUT_MS) {
+        throw new Error(
+          `Email queue still has an active job after ${EMAIL_QUEUE_DRAIN_TIMEOUT_MS}ms — it's stuck, not just slow.`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await queue.obliterate({ force: true });
+  } finally {
+    await queue.resume();
   }
-  await queue.obliterate({ force: true });
-  await queue.resume();
 }
 
 export async function truncateAll(app: INestApplication) {

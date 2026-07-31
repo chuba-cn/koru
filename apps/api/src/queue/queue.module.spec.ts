@@ -33,4 +33,22 @@ describe('parseRedisUrl', () => {
   it('defaults to db 0 when the URL has no path', () => {
     expect(parseRedisUrl('redis://localhost:6379').db).toBe(0);
   });
+
+  it('rejects a non-numeric database segment', () => {
+    expect(() => parseRedisUrl('redis://localhost:6379/foo')).toThrow(
+      /Invalid Redis database index/,
+    );
+  });
+
+  it('rejects a negative database index', () => {
+    expect(() => parseRedisUrl('redis://localhost:6379/-1')).toThrow(
+      /Invalid Redis database index/,
+    );
+  });
+
+  it('rejects a fractional database index', () => {
+    expect(() => parseRedisUrl('redis://localhost:6379/1.5')).toThrow(
+      /Invalid Redis database index/,
+    );
+  });
 });
