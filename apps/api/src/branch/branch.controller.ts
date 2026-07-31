@@ -47,7 +47,7 @@ export class BranchController {
   constructor(private readonly branchService: BranchService) {}
 
   @Post()
-  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin')
   @UseGuards(RolesGuard)
   @ApiOperation({ summary: 'Create a branch (optionally inside a region)' })
   @ApiCreatedResponse({ type: BranchDto })
@@ -62,9 +62,10 @@ export class BranchController {
   })
   create(
     @Param('churchId', ParseUUIDPipe) churchId: string,
+    @CallerStaff() caller: TenantStaff,
     @Body(new ZodValidationPipe(CreateBranchDto.schema)) body: CreateBranchDto,
   ) {
-    return this.branchService.create(churchId, body);
+    return this.branchService.create(churchId, caller, body);
   }
 
   @Get()
@@ -89,7 +90,7 @@ export class BranchController {
   }
 
   @Patch(':id')
-  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin')
   @UseGuards(RolesGuard)
   @ApiOperation({
     summary: 'Update a branch; set regionId to move it, null to remove it from its region',
@@ -107,8 +108,9 @@ export class BranchController {
   update(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Param('id', ParseUUIDPipe) id: string,
+    @CallerStaff() caller: TenantStaff,
     @Body(new ZodValidationPipe(UpdateBranchDto.schema)) body: UpdateBranchDto,
   ) {
-    return this.branchService.update(churchId, id, body);
+    return this.branchService.update(churchId, id, caller, body);
   }
 }

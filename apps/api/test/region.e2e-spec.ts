@@ -196,4 +196,148 @@ describe('Region (e2e)', () => {
 
     expect(list.body.items.map((r: { id: string }) => r.id)).toContain(alice.regionId);
   });
+
+  /**
+   * The headline #96 escalation: seeing a region and acting on it are different
+   * checks. A branch-scoped caller can SEE the region containing their branch
+   * (the test above), but must never be able to rename or delete it — that
+   * would let branch-level staff claim region-level authority.
+   */
+  it('403s a branch_admin renaming or deleting the region containing their branch, though they can see it', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const branch = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja', regionId: alice.regionId })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'branch_admin',
+        scopes: { create: [{ scopeType: 'branch', scopeRefId: branch.body.id }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .get(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/regions/${alice.regionId}`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Hijacked' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .delete(`/churches/${alice.churchId}/regions/${alice.regionId}`)
+      .set('Cookie', alice.cookie)
+      .expect(403);
+  });
+
+  /**
+   * #96: a delegated caller could rename or delete ANY region in the church,
+   * because update/remove only checked the church, not the caller's scope
+   * within it. Proven against real Postgres, not a mocked check.
+   */
+  it('403s a regional_admin renaming or deleting a region outside their own', async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const otherRegion = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Lagos', state: 'Lagos' })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/regions/${otherRegion.body.id}`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Hijacked' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .delete(`/churches/${alice.churchId}/regions/${otherRegion.body.id}`)
+      .set('Cookie', alice.cookie)
+      .expect(403);
+
+    // Their own region, meanwhile, still works.
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/regions/${alice.regionId}`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Abuja Metro' })
+      .expect(200);
+  });
+
+  it('403s finance renaming or deleting a region, even though finance can list them', async () => {
+    const { cookie, churchId, regionId, staffId } = await createAuthedChurchWithRegion(app);
+    await prisma.staff.update({ where: { id: staffId }, data: { role: 'finance' } });
+
+    await request(app.getHttpServer())
+      .get(`/churches/${churchId}/regions`)
+      .set('Cookie', cookie)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${churchId}/regions/${regionId}`)
+      .set('Cookie', cookie)
+      .send({ name: 'Renamed' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .delete(`/churches/${churchId}/regions/${regionId}`)
+      .set('Cookie', cookie)
+      .expect(403);
+  });
+
+  it('walks the region list forward then backward with no repeats or skips', async () => {
+    const { cookie, churchId } = await createAuthedChurch(app);
+
+    for (const [name, state] of [
+      ['Abuja', 'FCT'],
+      ['Lagos', 'Lagos'],
+      ['Kano', 'Kano'],
+    ] as const) {
+      await request(app.getHttpServer())
+        .post(`/churches/${churchId}/regions`)
+        .set('Cookie', cookie)
+        .send({ name, state })
+        .expect(201);
+    }
+
+    const first = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/regions`)
+      .query({ limit: 2 })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(first.body.hasNextPage).toBe(true);
+    expect(first.body.hasPreviousPage).toBe(false);
+
+    const second = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/regions`)
+      .query({ limit: 2, cursor: first.body.endCursor })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    const firstIds = first.body.items.map((r: { id: string }) => r.id);
+    const secondIds = second.body.items.map((r: { id: string }) => r.id);
+    expect(secondIds.some((id: string) => firstIds.includes(id))).toBe(false);
+    expect(second.body.hasPreviousPage).toBe(true);
+
+    const back = await request(app.getHttpServer())
+      .get(`/churches/${churchId}/regions`)
+      .query({ limit: 2, direction: 'backward', cursor: second.body.startCursor })
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(back.body.items.map((r: { id: string }) => r.id)).toEqual(firstIds);
+  });
 });

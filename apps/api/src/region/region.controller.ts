@@ -45,7 +45,7 @@ export class RegionController {
   constructor(private readonly regionService: RegionService) {}
 
   @Post()
-  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin')
   @UseGuards(RolesGuard)
   @ApiOperation({ summary: 'Create a region in a church' })
   @ApiCreatedResponse({ type: RegionDto })
@@ -87,7 +87,7 @@ export class RegionController {
   }
 
   @Patch(':id')
-  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin')
   @UseGuards(RolesGuard)
   @ApiOperation({ summary: 'Rename/update a region' })
   @ApiOkResponse({ type: RegionDto })
@@ -103,13 +103,14 @@ export class RegionController {
   update(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Param('id', ParseUUIDPipe) id: string,
+    @CallerStaff() caller: TenantStaff,
     @Body(new ZodValidationPipe(UpdateRegionDto.schema)) body: UpdateRegionDto,
   ) {
-    return this.regionService.update(churchId, id, body);
+    return this.regionService.update(churchId, id, caller, body);
   }
 
   @Delete(':id')
-  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
+  @StaffRoles('super_admin', 'regional_admin', 'branch_admin')
   @UseGuards(RolesGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete an empty region' })
@@ -119,7 +120,8 @@ export class RegionController {
   remove(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Param('id', ParseUUIDPipe) id: string,
+    @CallerStaff() caller: TenantStaff,
   ) {
-    return this.regionService.remove(churchId, id);
+    return this.regionService.remove(churchId, id, caller);
   }
 }

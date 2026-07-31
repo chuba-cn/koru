@@ -6,6 +6,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   Res,
   UseGuards,
 } from '@nestjs/common';
@@ -24,9 +25,9 @@ import { Session, type UserSession } from '@thallesp/nestjs-better-auth';
 import type { Response } from 'express';
 import { auth } from '../auth/auth';
 import { VerifiedPhoneGuard } from '../auth/verified-phone.guard';
-import { ErrorResponseDto } from '../common/api.dto';
+import { ErrorResponseDto, PaginationQueryDto } from '../common/api.dto';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { BranchDirectoryItemDto, JoinMemberDto, MemberDto } from './member.dto';
+import { BranchDirectoryPageDto, JoinMemberDto, MemberDto } from './member.dto';
 import { MemberService } from './member.service';
 
 @ApiTags('join')
@@ -36,11 +37,22 @@ export class JoinController {
   constructor(private readonly memberService: MemberService) {}
 
   @Get(':churchId/branches')
-  @ApiOperation({ summary: "List a church's branches, for a join form" })
-  @ApiOkResponse({ type: BranchDirectoryItemDto, isArray: true })
+  @ApiOperation({
+    summary: "List a church's branches, for a join form",
+    description:
+      'Cursor paginated. Send the response "endCursor" value as "cursor" with "direction=forward" for Next, or the response "startCursor" value as "cursor" with "direction=backward" for previous.',
+  })
+  @ApiOkResponse({ type: BranchDirectoryPageDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
-  listBranches(@Param('churchId', ParseUUIDPipe) churchId: string) {
-    return this.memberService.listBranches(churchId);
+  @ApiBadRequestResponse({
+    description: 'Malformed cursor/limit, cursor not found, or direction=backward with no cursor',
+    type: ErrorResponseDto,
+  })
+  listBranches(
+    @Param('churchId', ParseUUIDPipe) churchId: string,
+    @Query(new ZodValidationPipe(PaginationQueryDto.schema)) query: PaginationQueryDto,
+  ) {
+    return this.memberService.listBranches(churchId, query);
   }
 
   @Post(':churchId')

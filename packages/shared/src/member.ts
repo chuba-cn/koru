@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { paginatedResponseSchema } from './pagination.js';
 import { PhoneSchema } from './schemas.js';
 
 export const JoinMemberSchema = z.object({
@@ -25,7 +26,7 @@ export const BranchDirectoryItemSchema = z.object({
 export const MyProfileSchema = z.object({
   name: z.string(),
   phoneNumber: z.string().nullable(),
-  memberships: z.array(MemberSchema),
+  memberships: paginatedResponseSchema(MemberSchema),
 });
 
 export type JoinMemberInput = z.infer<typeof JoinMemberSchema>;

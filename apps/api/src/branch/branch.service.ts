@@ -37,10 +37,14 @@ export class BranchService {
     }
   }
 
-  async create(churchId: string, input: CreateBranchInput) {
+  async create(churchId: string, caller: TenantStaff, input: CreateBranchInput) {
     await this.assertChurchExists(churchId);
     if (input.regionId) {
       await this.assertRegionInChurch(churchId, input.regionId);
+      await this.scopeService.assertCanActOnScope(caller, {
+        scopeType: 'region',
+        scopeRefId: input.regionId,
+      });
     }
 
     try {
@@ -95,11 +99,28 @@ export class BranchService {
     return branch;
   }
 
-  async update(churchId: string, id: string, input: UpdateBranchInput) {
-    await this.findById(churchId, id);
+  async update(churchId: string, id: string, caller: TenantStaff, input: UpdateBranchInput) {
+    const current = await this.findById(churchId, id);
+    await this.scopeService.assertCanActOnScope(caller, { scopeType: 'branch', scopeRefId: id });
 
-    if (typeof input.regionId === 'string') {
-      await this.assertRegionInChurch(churchId, input.regionId);
+    // A move needs authority over BOTH sides — the region losing the branch and
+    // the one gaining it — or a caller could detach/steal a branch through a
+    // region they otherwise have no authority over.
+    if (typeof input.regionId !== 'undefined' && input.regionId !== current.regionId) {
+      if (current.regionId) {
+        await this.scopeService.assertCanActOnScope(caller, {
+          scopeType: 'region',
+          scopeRefId: current.regionId,
+        });
+      }
+
+      if (typeof input.regionId === 'string') {
+        await this.assertRegionInChurch(churchId, input.regionId);
+        await this.scopeService.assertCanActOnScope(caller, {
+          scopeType: 'region',
+          scopeRefId: input.regionId,
+        });
+      }
     }
 
     try {

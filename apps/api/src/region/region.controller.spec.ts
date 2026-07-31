@@ -7,7 +7,11 @@ import { RegionController } from './region.controller';
 
 const guardsOf = (target: object) => (Reflect.getMetadata('__guards__', target) as unknown[]) ?? [];
 
-const ADMIN_ROLES = ['super_admin', 'regional_admin', 'branch_admin', 'finance'] as const;
+// list is open to any tenant staff (finance was widened in for visibility, #85).
+// Every structural mutation — create, rename, delete — is restricted to the
+// structural-admin roles, with finance deliberately excluded: seeing the org
+// structure is a finance concern, editing it is not (#96).
+const MUTATION_ROLES = ['super_admin', 'regional_admin', 'branch_admin'] as const;
 
 describe('RegionController wiring', () => {
   const reflector = new Reflector();
@@ -25,8 +29,10 @@ describe('RegionController wiring', () => {
     'create',
     'update',
     'remove',
-  ] as const)('restricts %s to the four admin-tier roles, excluding recorder', (method) => {
+  ] as const)('restricts %s to the structural-admin roles, excluding finance and recorder', (method) => {
     expect(guardsOf(RegionController.prototype[method])).toEqual([RolesGuard]);
-    expect(reflector.get(STAFF_ROLES_KEY, RegionController.prototype[method])).toEqual(ADMIN_ROLES);
+    expect(reflector.get(STAFF_ROLES_KEY, RegionController.prototype[method])).toEqual(
+      MUTATION_ROLES,
+    );
   });
 });

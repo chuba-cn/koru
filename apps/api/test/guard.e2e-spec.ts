@@ -108,7 +108,6 @@ describe('Guards (e2e)', () => {
   it.each([
     'regional_admin',
     'branch_admin',
-    'finance',
   ] as const)('lets a %s create a region and a branch', async (role) => {
     const alice = await createAuthedChurch(app);
     await prisma.staff.update({ where: { id: alice.staffId }, data: { role } });
@@ -124,6 +123,27 @@ describe('Guards (e2e)', () => {
       .set('Cookie', alice.cookie)
       .send({ name: 'Ikeja' })
       .expect(201);
+  });
+
+  /**
+   * #96: creating org structure is structural admin, not a finance act — finance
+   * can see the structure (list) but not create, rename, or delete it.
+   */
+  it('403s finance attempting to create a region or a branch', async () => {
+    const alice = await createAuthedChurch(app);
+    await prisma.staff.update({ where: { id: alice.staffId }, data: { role: 'finance' } });
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'North', state: 'Lagos' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja' })
+      .expect(403);
   });
 
   it('403s a member session reaching a staff-only route', async () => {

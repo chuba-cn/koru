@@ -74,8 +74,9 @@ export class RegionService {
     return region;
   }
 
-  async update(churchId: string, id: string, input: UpdateRegionInput) {
+  async update(churchId: string, id: string, caller: TenantStaff, input: UpdateRegionInput) {
     await this.findById(churchId, id);
+    await this.scopeService.assertCanActOnScope(caller, { scopeType: 'region', scopeRefId: id });
 
     try {
       return await this.prisma.region.update({ where: { id }, data: input });
@@ -88,8 +89,10 @@ export class RegionService {
     }
   }
 
-  async remove(churchId: string, id: string) {
+  async remove(churchId: string, id: string, caller: TenantStaff) {
     await this.findById(churchId, id);
+    await this.scopeService.assertCanActOnScope(caller, { scopeType: 'region', scopeRefId: id });
+
     const branchCount = await this.prisma.branch.count({ where: { regionId: id } });
 
     if (branchCount > 0) {

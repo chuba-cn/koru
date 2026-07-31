@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { TenantStaff } from '../auth/tenant.guard';
 import { Prisma } from '../generated/prisma/client';
@@ -6,6 +11,7 @@ import { BranchService } from './branch.service';
 
 const CHURCH = 'church-1';
 const REGION = 'region-1';
+const OTHER_REGION = 'region-2';
 const BRANCH = { id: 'branch-1', churchId: CHURCH, regionId: REGION, name: 'Wuse' };
 
 function fakePrisma() {
@@ -17,7 +23,11 @@ function fakePrisma() {
     },
     region: {
       findFirst: vi.fn(({ where }: { where: { id: string; churchId: string } }) =>
-        Promise.resolve(where.id === REGION && where.churchId === CHURCH ? { id: REGION } : null),
+        Promise.resolve(
+          [REGION, OTHER_REGION].includes(where.id) && where.churchId === CHURCH
+            ? { id: where.id }
+            : null,
+        ),
       ),
     },
     branch: {
@@ -34,10 +44,21 @@ function fakePrisma() {
   };
 }
 
-function fakeScopeService(overrides: { branchIds?: string[] } = {}) {
+function fakeScopeService(
+  overrides: {
+    branchIds?: string[];
+    deny?: (target: { scopeType: string; scopeRefId: string }) => boolean;
+  } = {},
+) {
   return {
     coveredRegionIds: vi.fn(() => Promise.resolve([])),
     coveredBranchIds: vi.fn(() => Promise.resolve(overrides.branchIds ?? [])),
+    assertCanActOnScope: vi.fn(
+      (_caller: unknown, target: { scopeType: string; scopeRefId: string }) =>
+        overrides.deny?.(target)
+          ? Promise.reject(new ForbiddenException('outside scope'))
+          : Promise.resolve(),
+    ),
   };
 }
 
@@ -50,11 +71,13 @@ const duplicateKeyError = () =>
 
 describe('BranchService', () => {
   describe('create', () => {
+    const superAdmin = callerWith('super_admin');
+
     it('rejects when the church does not exist', async () => {
       const service = new BranchService(fakePrisma() as never, fakeScopeService() as never);
 
       await expect(
-        service.create('no-such-church', { name: 'Wuse', regionId: REGION }),
+        service.create('no-such-church', superAdmin, { name: 'Wuse', regionId: REGION }),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -63,7 +86,7 @@ describe('BranchService', () => {
       const service = new BranchService(prisma as never, fakeScopeService() as never);
 
       await expect(
-        service.create(CHURCH, { name: 'Wuse', regionId: 'someone-elses-region' }),
+        service.create(CHURCH, superAdmin, { name: 'Wuse', regionId: 'someone-elses-region' }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.branch.create).not.toHaveBeenCalled();
     });
@@ -72,7 +95,7 @@ describe('BranchService', () => {
       const prisma = fakePrisma();
       const service = new BranchService(prisma as never, fakeScopeService() as never);
 
-      await service.create(CHURCH, { name: 'Wuse' });
+      await service.create(CHURCH, superAdmin, { name: 'Wuse' });
 
       expect(prisma.region.findFirst).not.toHaveBeenCalled();
       expect(prisma.branch.create).toHaveBeenCalled();
@@ -83,12 +106,31 @@ describe('BranchService', () => {
       prisma.branch.create.mockRejectedValue(duplicateKeyError());
       const service = new BranchService(prisma as never, fakeScopeService() as never);
 
-      await expect(service.create(CHURCH, { name: 'Wuse', regionId: REGION })).rejects.toThrow(
-        ConflictException,
-      );
-      await expect(service.create(CHURCH, { name: 'Wuse', regionId: REGION })).rejects.toThrow(
-        /Wuse/,
-      );
+      await expect(
+        service.create(CHURCH, superAdmin, { name: 'Wuse', regionId: REGION }),
+      ).rejects.toThrow(ConflictException);
+      await expect(
+        service.create(CHURCH, superAdmin, { name: 'Wuse', regionId: REGION }),
+      ).rejects.toThrow(/Wuse/);
+    });
+
+    /**
+     * #96: creating a branch inside a region is a scoped act on that region,
+     * exactly like moving one into it — a caller who only has authority over
+     * some OTHER region must not be able to plant a branch inside this one.
+     */
+    it('refuses to create a branch in a region the caller has no authority over', async () => {
+      const prisma = fakePrisma();
+      const scope = fakeScopeService({ deny: (t) => t.scopeRefId === REGION });
+      const service = new BranchService(prisma as never, scope as never);
+      const caller = callerWith('regional_admin', [
+        { scopeType: 'region', scopeRefId: OTHER_REGION },
+      ]);
+
+      await expect(
+        service.create(CHURCH, caller, { name: 'Wuse', regionId: REGION }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.branch.create).not.toHaveBeenCalled();
     });
   });
 
@@ -189,9 +231,9 @@ describe('BranchService', () => {
       const prisma = fakePrisma();
       const service = new BranchService(prisma as never, fakeScopeService() as never);
 
-      await expect(service.update(CHURCH, 'no-such-branch', { name: 'New Name' })).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.update(CHURCH, 'no-such-branch', callerWith('super_admin'), { name: 'New Name' }),
+      ).rejects.toThrow(NotFoundException);
       expect(prisma.branch.update).not.toHaveBeenCalled();
     });
 
@@ -200,7 +242,9 @@ describe('BranchService', () => {
       const service = new BranchService(prisma as never, fakeScopeService() as never);
 
       await expect(
-        service.update(CHURCH, BRANCH.id, { regionId: 'someone-elses-region' }),
+        service.update(CHURCH, BRANCH.id, callerWith('super_admin'), {
+          regionId: 'someone-elses-region',
+        }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.branch.update).not.toHaveBeenCalled();
     });
@@ -209,9 +253,111 @@ describe('BranchService', () => {
       const prisma = fakePrisma();
       const service = new BranchService(prisma as never, fakeScopeService() as never);
 
-      const result = await service.update(CHURCH, BRANCH.id, { name: 'New Name' });
+      const result = await service.update(CHURCH, BRANCH.id, callerWith('super_admin'), {
+        name: 'New Name',
+      });
 
       expect(result.name).toBe('New Name');
+    });
+  });
+
+  /**
+   * #96: a branch mutation needs authority over the branch's current scope, and
+   * — when it moves the branch — over the destination region too. Covering only
+   * one side would let a caller steal a branch or fling it into a region they do
+   * not control.
+   */
+  describe('scope enforcement (#96)', () => {
+    it('refuses update when the caller has no authority over the branch, before writing', async () => {
+      const prisma = fakePrisma();
+      const service = new BranchService(
+        prisma as never,
+        fakeScopeService({ deny: () => true }) as never,
+      );
+      const outsider = callerWith('branch_admin', [
+        { scopeType: 'branch', scopeRefId: 'branch-x' },
+      ]);
+
+      await expect(
+        service.update(CHURCH, BRANCH.id, outsider, { name: 'Renamed' }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.branch.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a move when the caller cannot act on the destination region', async () => {
+      const prisma = fakePrisma();
+      // Covers the branch's current region (source), but not the destination.
+      const scope = fakeScopeService({ deny: (t) => t.scopeRefId === OTHER_REGION });
+      const service = new BranchService(prisma as never, scope as never);
+      const caller = callerWith('regional_admin', [{ scopeType: 'region', scopeRefId: REGION }]);
+
+      await expect(
+        service.update(CHURCH, BRANCH.id, caller, { regionId: OTHER_REGION }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.branch.update).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The other half of the same escalation: a caller who covers only the
+     * DESTINATION region must not be able to pull a branch OUT of a source
+     * region they have no authority over.
+     */
+    it('refuses a move when the caller cannot act on the source region', async () => {
+      const prisma = fakePrisma();
+      const scope = fakeScopeService({
+        deny: (t) => t.scopeType === 'region' && t.scopeRefId === REGION,
+      });
+      const service = new BranchService(prisma as never, scope as never);
+      const caller = callerWith('regional_admin', [
+        { scopeType: 'branch', scopeRefId: BRANCH.id },
+        { scopeType: 'region', scopeRefId: OTHER_REGION },
+      ]);
+
+      await expect(
+        service.update(CHURCH, BRANCH.id, caller, { regionId: OTHER_REGION }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.branch.update).not.toHaveBeenCalled();
+    });
+
+    it('checks both the branch and the destination region on a move, then proceeds', async () => {
+      const prisma = fakePrisma();
+      const scope = fakeScopeService();
+      const service = new BranchService(prisma as never, scope as never);
+      const caller = callerWith('regional_admin', [
+        { scopeType: 'region', scopeRefId: REGION },
+        { scopeType: 'region', scopeRefId: OTHER_REGION },
+      ]);
+
+      await service.update(CHURCH, BRANCH.id, caller, { regionId: OTHER_REGION });
+
+      expect(scope.assertCanActOnScope).toHaveBeenCalledWith(caller, {
+        scopeType: 'branch',
+        scopeRefId: BRANCH.id,
+      });
+      expect(scope.assertCanActOnScope).toHaveBeenCalledWith(caller, {
+        scopeType: 'region',
+        scopeRefId: REGION,
+      });
+      expect(scope.assertCanActOnScope).toHaveBeenCalledWith(caller, {
+        scopeType: 'region',
+        scopeRefId: OTHER_REGION,
+      });
+      expect(prisma.branch.update).toHaveBeenCalled();
+    });
+
+    it('does not re-check region authority when regionId is unchanged, only re-sent', async () => {
+      const prisma = fakePrisma();
+      const scope = fakeScopeService();
+      const service = new BranchService(prisma as never, scope as never);
+      const caller = callerWith('branch_admin', [{ scopeType: 'branch', scopeRefId: BRANCH.id }]);
+
+      await service.update(CHURCH, BRANCH.id, caller, { regionId: REGION, name: 'Renamed' });
+
+      expect(scope.assertCanActOnScope).toHaveBeenCalledTimes(1);
+      expect(scope.assertCanActOnScope).toHaveBeenCalledWith(caller, {
+        scopeType: 'branch',
+        scopeRefId: BRANCH.id,
+      });
     });
   });
 });

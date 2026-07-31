@@ -88,12 +88,21 @@ describe('BranchDirectoryItemSchema', () => {
   });
 });
 
+const emptyPage = {
+  items: [] as (typeof validMember)[],
+  totalCount: 0,
+  hasNextPage: false,
+  hasPreviousPage: false,
+  startCursor: null,
+  endCursor: null,
+};
+
 describe('MyProfileSchema', () => {
-  it('accepts an empty memberships list, for a login with no memberships yet', () => {
+  it('accepts an empty memberships page, for a login with no memberships yet', () => {
     const result = MyProfileSchema.safeParse({
       name: 'Ada Lovelace',
       phoneNumber: '+2348012345678',
-      memberships: [],
+      memberships: emptyPage,
     });
     expect(result.success).toBe(true);
   });
@@ -102,17 +111,35 @@ describe('MyProfileSchema', () => {
     const result = MyProfileSchema.safeParse({
       name: 'Ada Lovelace',
       phoneNumber: null,
-      memberships: [],
+      memberships: emptyPage,
     });
     expect(result.success).toBe(true);
   });
 
-  it('accepts memberships across multiple churches', () => {
+  it('accepts memberships across multiple churches, inside the pagination envelope', () => {
     const result = MyProfileSchema.safeParse({
       name: 'Ada Lovelace',
       phoneNumber: '+2348012345678',
-      memberships: [validMember, { ...validMember, churchId: BRANCH }],
+      memberships: {
+        ...emptyPage,
+        items: [validMember, { ...validMember, churchId: BRANCH }],
+        totalCount: 2,
+        endCursor: validMember.id,
+      },
     });
     expect(result.success).toBe(true);
+  });
+
+  /**
+   * #84: memberships is now a paginated envelope, not a bare array — a caller
+   * still on the old shape must fail validation, not be silently accepted.
+   */
+  it('rejects a bare memberships array now that it is a paginated envelope', () => {
+    const result = MyProfileSchema.safeParse({
+      name: 'Ada Lovelace',
+      phoneNumber: '+2348012345678',
+      memberships: [validMember],
+    });
+    expect(result.success).toBe(false);
   });
 });

@@ -184,13 +184,13 @@ graph LR
 | `health` | `GET /health`, `GET /health/db`, `GET /health/redis` | Public |
 | `onboarding` | `POST /onboarding/church` | Session only — you have no church yet |
 | `church` | `GET`/`PATCH /churches/:churchId` | Tenant; `PATCH` also needs super_admin |
-| `region` | CRUD under `/churches/:churchId/regions` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and narrowed to the caller's own scope for every delegated role (`super_admin` sees the whole church) — mutations are **not yet scoped** ([koru-app/koru#96](https://github.com/koru-app/koru/issues/96)) |
-| `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; mutations also need `super_admin`/`regional_admin`/`branch_admin`/`finance` — `recorder` reads only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed the same way as `region`; mutations likewise not yet scoped ([koru-app/koru#96](https://github.com/koru-app/koru/issues/96)) |
+| `region` | CRUD under `/churches/:churchId/regions` | Tenant; every mutation (`POST`/`PATCH`/`DELETE`) needs `super_admin`/`regional_admin`/`branch_admin` — `finance`/`recorder` read only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and narrowed to the caller's own scope for every delegated role (`super_admin` sees the whole church); mutations are authority-checked against that same scope via `ScopeService.assertCanActOnScope` (see [below](#scoping-a-mutation-is-not-the-same-check-as-scoping-a-list)) |
+| `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; every mutation (`POST`/`PATCH`) needs `super_admin`/`regional_admin`/`branch_admin` — `finance`/`recorder` read only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed the same way as `region`; mutations are authority-checked the same way, including both sides of a move between regions |
 | `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; every route except clear-login is also open to `regional_admin`/`branch_admin`, capped by [delegated management](./architecture/delegated-staff-management.md); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
 | `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin, except `GET`, also open to `regional_admin`/`branch_admin`/`finance` (a deliberate, per-route exception to the class-level lock — see [`settlement-account.controller.spec.ts`](../apps/api/src/settlement-account/settlement-account.controller.spec.ts)); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed (a delegated caller's own branch(es) plus any church-wide account) |
-| `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard |
-| `member` (join) | `GET /join/:churchId/branches`, `POST /join/:churchId` (201 create / 200 update) | Session; `POST` also needs a verified phone |
+| `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard; all three lists are [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
+| `member` (join) | `GET /join/:churchId/branches`, `POST /join/:churchId` (201 create / 200 update) | Session; `POST` also needs a verified phone; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
 
 Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar), `queue` (the BullMQ connection and the `email` queue, registered `@Global()` the same way `prisma` is), `notifications` (`MailService` and `EmailProcessor`). `notifications` is the first background-job module in the codebase — see [Email queue and delivery logging](./architecture/email-queue-and-logging.md) for the full flow, retry/backoff behavior, and why a queue exists here at all.
 
@@ -233,25 +233,49 @@ Success responses return the resource itself, with no wrapper. Every failure con
 
 ### Paginated lists are cursor-based, not offset-based
 
-`Staff`, `Region`, `Branch`, and `SettlementAccount`'s `GET` (list) routes share one cursor contract
-in `packages/shared/src/pagination.ts`: `{ items, totalCount, hasNextPage, hasPreviousPage,
-startCursor, endCursor }`, with a `?cursor&direction&limit` query. Not offset (`page`/`pageSize`):
-offset pagination makes Postgres skip `N` rows to reach a deep page, which gets slower the further a
-client pages, and it isn't stable under concurrent inserts/deletes — real concerns at KORU's target
-scale of a single tenant with 30,000+ members and 500+ branches. `Member`'s list endpoints are
-tracked to move onto this same contract by
-[koru-app/koru#84](https://github.com/koru-app/koru/issues/84); until that lands, treat an
-unpaginated list endpoint as a known gap, not a precedent to copy. See
+`Staff`, `Region`, `Branch`, `SettlementAccount`, and `Member`'s `GET` (list) routes share one
+cursor contract in `packages/shared/src/pagination.ts`: `{ items, totalCount, hasNextPage,
+hasPreviousPage, startCursor, endCursor }`, with a `?cursor&direction&limit` query. Not offset
+(`page`/`pageSize`): offset pagination makes Postgres skip `N` rows to reach a deep page, which
+gets slower the further a client pages, and it isn't stable under concurrent inserts/deletes — real
+concerns at KORU's target scale of a single tenant with 30,000+ members and 500+ branches.
+`MemberService`'s four lists (`listBranches`, `myProfile`'s memberships, `myPledges`,
+`myPayments`) moved onto this same contract in
+[koru-app/koru#84](https://github.com/koru-app/koru/issues/84) — every list endpoint in the API is
+now on the shared contract; an unpaginated list is a regression, not a known gap. See
 [ADR-0006](../apps/api/docs/adr/0006-standard-error-shape-no-envelope.md)'s update.
 
 The envelope math (cursor validation, `hasNextPage`/`hasPreviousPage`, the empty-page cursor
 fallback) lives in exactly one place, `apps/api/src/common/cursor-pagination.ts`
-(`assertValidDirection`/`assertCursorVisible`/`buildCursorPage`), used by all four services — it is
+(`assertValidDirection`/`assertCursorVisible`/`buildCursorPage`), used by every service — it is
 deliberately not re-implemented per model. `RegionService.list`/`BranchService.list`/`SettlementAccountService.list`
 (`apps/api/src/{region,branch,settlement-account}/*.service.ts`) are the reference for how
 authorization scoping is pushed into the same `where` clause instead of filtering in application
 code after an unbounded fetch, resolving a caller's region/branch scopes via
-`ScopeService.coveredRegionIds`/`coveredBranchIds`.
+`ScopeService.coveredRegionIds`/`coveredBranchIds`. `MemberService`'s four lists need no such scope
+— they are self-scoped to the caller's own `userId`, not to a StaffScope.
+
+### Scoping a mutation is not the same check as scoping a list
+
+`ScopeService.coveredRegionIds`/`coveredBranchIds` resolve a branch scope *up* to its containing
+region — correct for **visibility** (a branch-scoped clerk may see the region their branch sits
+in), and their own comment says so: "For visibility only: do not use for authority checks." Using
+them to gate a mutation was exactly the bug in
+[koru-app/koru#96](https://github.com/koru-app/koru/issues/96): `RegionService.update`/`.remove`
+and `BranchService.update` checked only that a row belonged to the caller's *church*
+(`findById(churchId, id)`), never that it belonged to the caller's *scope* within it — so a
+`branch_admin` could rename or delete any region in the church.
+
+The fix, and the pattern for any future mutation on a scoped resource: authority is
+`ScopeService.assertCanActOnScope(caller, target)`, built on `scopeCovers` — the one-directional
+check (a region scope reaches its branches; a branch scope never reaches back up to its own
+region) that `StaffService.assertCanManageStaff` already used for staff mutations. Creating a
+branch inside a region, and moving a branch between regions, both need authority over **every**
+region touched — creation checks the destination, a move checks the branch's current region *and*
+the destination — or a `regional_admin` could plant a branch in, steal a branch from, or fling a
+branch into a region they do not control. `finance` was deliberately dropped from every structural
+mutation (`POST`/`PATCH`/`DELETE`) on both controllers — seeing the org structure is a finance
+concern (`list`), editing it is not.
 
 ### Money is always integer Kobo
 

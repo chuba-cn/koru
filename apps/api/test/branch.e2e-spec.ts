@@ -281,6 +281,74 @@ describe('Branches (e2e)', () => {
     expect(ids).not.toContain(peer.body.id);
   });
 
+  /**
+   * #96: update could rename or move ANY branch in the church regardless of the
+   * caller's scope. Moving is the sharper case — it needs authority over BOTH
+   * the branch's current scope and the destination region, or a regional_admin
+   * could fling a branch into a region they don't control.
+   */
+  it("403s a regional_admin renaming a branch outside their region, or moving their own branch into someone else's", async () => {
+    const alice = await createAuthedChurchWithRegion(app);
+    const otherRegion = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/regions`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Lagos', state: 'Lagos' })
+      .expect(201);
+    const ownBranch = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Garki', regionId: alice.regionId })
+      .expect(201);
+    const foreignBranch = await request(app.getHttpServer())
+      .post(`/churches/${alice.churchId}/branches`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Ikeja', regionId: otherRegion.body.id })
+      .expect(201);
+
+    await prisma.staff.update({
+      where: { id: alice.staffId },
+      data: {
+        role: 'regional_admin',
+        scopes: { create: [{ scopeType: 'region', scopeRefId: alice.regionId }] },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/branches/${foreignBranch.body.id}`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Hijacked' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/branches/${ownBranch.body.id}`)
+      .set('Cookie', alice.cookie)
+      .send({ regionId: otherRegion.body.id })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${alice.churchId}/branches/${ownBranch.body.id}`)
+      .set('Cookie', alice.cookie)
+      .send({ name: 'Garki Central' })
+      .expect(200);
+  });
+
+  it('403s finance renaming a branch, even though finance can list them', async () => {
+    const { cookie, churchId, staffId } = await createAuthedChurch(app);
+    const branch = await createBranch(app, churchId, cookie);
+    await prisma.staff.update({ where: { id: staffId }, data: { role: 'finance' } });
+
+    await request(app.getHttpServer())
+      .get(`/churches/${churchId}/branches`)
+      .set('Cookie', cookie)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/churches/${churchId}/branches/${branch.id}`)
+      .set('Cookie', cookie)
+      .send({ name: 'Renamed' })
+      .expect(403);
+  });
+
   it('walks a real roster forward then backward with no repeats or skips', async () => {
     const { cookie, churchId } = await createAuthedChurch(app);
 
