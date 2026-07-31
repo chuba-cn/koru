@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { AuthModule } from '@thallesp/nestjs-better-auth';
 import { auth } from './auth/auth';
+import { AuthPrismaLifecycle } from './auth/auth-prisma-lifecycle.service';
 import { BranchModule } from './branch/branch.module';
 import { ChurchModule } from './church/church.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
@@ -35,6 +36,7 @@ import { StaffModule } from './staff/staff.module';
       provide: APP_FILTER,
       useClass: GlobalExceptionFilter,
     },
+    AuthPrismaLifecycle,
   ],
 })
 export class AppModule {}

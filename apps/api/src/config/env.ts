@@ -1,4 +1,14 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+
+// The one dotenv load auth.ts needs, incl. the Better Auth CLI (which loads
+// auth.ts standalone but still imports requireEnv from here). Skipped under
+// Vitest, which always sets this: a test run's env is already fully owned by
+// test/global-setup.ts or vitest.config.ts's inline `env` block, and a second
+// load would silently fill gaps from a developer's real .env, since dotenv's
+// plain load never overrides. See #102.
+if (!process.env.VITEST) {
+  config();
+}
 
 /**
  * Reads a required environment variable and throws at boot when it is absent.

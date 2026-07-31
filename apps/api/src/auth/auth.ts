@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { BetterAuthOptions } from 'better-auth';
 import { betterAuth } from 'better-auth';
@@ -24,6 +23,12 @@ const NIGERIAN_E164 = /^\+234[789][01]\d{8}$/;
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: requireEnv('DATABASE_URL') }),
 });
+
+// This pool lives outside Nest's DI, so nothing closes it automatically.
+// AuthPrismaLifecycle calls this from onModuleDestroy. See #94.
+export async function disconnectAuthPrisma() {
+  await prisma.$disconnect();
+}
 
 const googleCredentials = requireEnvPairOrNone('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET');
 const socialProviders: BetterAuthOptions['socialProviders'] = googleCredentials
