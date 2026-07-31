@@ -2,12 +2,10 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
 import { truncateAll } from './db-utils';
 
 describe('Health (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaService;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -16,11 +14,10 @@ describe('Health (e2e)', () => {
 
     app = moduleRef.createNestApplication();
     await app.init();
-    prisma = app.get(PrismaService);
   });
 
   beforeEach(async () => {
-    await truncateAll(prisma);
+    await truncateAll(app);
   });
 
   afterAll(async () => {

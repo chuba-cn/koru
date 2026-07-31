@@ -11,12 +11,14 @@ const DEFAULT_REDIS_PORT = 6379;
 
 export function parseRedisUrl(url: string) {
   const parsed = new URL(url);
+  const dbSegment = parsed.pathname.replace(/^\//, '');
 
   return {
     host: parsed.hostname,
     port: parsed.port ? Number(parsed.port) : DEFAULT_REDIS_PORT,
     username: parsed.username || undefined,
     password: parsed.password || undefined,
+    db: dbSegment ? Number(dbSegment) : 0,
   };
 }
 
