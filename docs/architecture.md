@@ -194,6 +194,8 @@ graph LR
 
 Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar), `queue` (the BullMQ connection and the `email` queue, registered `@Global()` the same way `prisma` is), `notifications` (`MailService` and `EmailProcessor`). `notifications` is the first background-job module in the codebase — see [Email queue and delivery logging](./architecture/email-queue-and-logging.md) for the full flow, retry/backoff behavior, and why a queue exists here at all.
 
+There are two Postgres connection pools per running app, not one: the Nest-managed `PrismaService`, and a second, separate `PrismaClient` in `auth/auth.ts` (needed because the Better Auth CLI loads that file standalone, outside Nest's bootstrap). Both now close on `app.close()` — `PrismaService` via its own `onModuleDestroy`, the auth one via `AuthPrismaLifecycle`, a small provider registered in `AppModule` for exactly this. Before this, `app.close()` (every e2e test's `afterAll`) left both pools open — see #94.
+
 ---
 
 ## Patterns to follow

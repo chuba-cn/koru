@@ -24,6 +24,15 @@ running `pnpm dev` uses.
 
 One subtlety worth knowing, because it caught this suite out. `auth.ts` validates its configuration at *import* time, and any spec touching a controller pulls it in transitively. So the unit layer needs those variables **present**, though it never opens a connection with them — `PrismaClient` does not dial the database until a query is issued. They are declared in `apps/api/vitest.config.ts` under `test.env` rather than read from a local `.env`, because CI has no `.env`. Relying on the local file made the suite pass on a developer machine and fail on a clean runner.
 
+**A test run never reads your local `.env`, structurally, not by convention.** `config/env.ts` and
+`auth/auth.ts` each guard their own `dotenv` load behind `if (!process.env.VITEST)` — Vitest always
+sets that variable, in both the unit and e2e configs. So the same second, redundant load that used
+to run after `test/global-setup.ts` already populated `.env.test` (dotenv's plain load only fills
+gaps, never overrides) is skipped outright during a test run — not merely made harmless by
+enumerating every key `.env.test` needs to blank. A developer's own `apps/api/.env` can carry any
+key at all with no effect on e2e. See `config/env.spec.ts` for the regression test, and #102 for
+the incident this closes.
+
 ---
 
 ## Why both
