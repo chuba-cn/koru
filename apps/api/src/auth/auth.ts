@@ -1,13 +1,20 @@
+import { renderResetPasswordEmail, renderVerificationEmail } from '@koru/emails';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { BetterAuthOptions } from 'better-auth';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { openAPI, phoneNumber } from 'better-auth/plugins';
-import { requireEnv, requireEnvPairOrNone, requireOriginList } from '../config/env';
+import {
+  LOGO_URL,
+  requireEnv,
+  requireEnvPairOrNone,
+  requireOriginList,
+  SUPPORT_EMAIL,
+  SUPPORT_PHONE,
+} from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
 import { mailSender } from '../notifications/mail-sender';
 import { smsSender } from '../notifications/sms-sender';
-import { resetPasswordEmailHtml, verificationEmailHtml } from './auth-email-templates';
 
 export const SESSION_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 30;
 export const SESSION_UPDATE_AGE_SECONDS = 60 * 60 * 24;
@@ -52,14 +59,25 @@ export const auth = betterAuth({
     minPasswordLength: 8,
     requireEmailVerification: true,
     sendResetPassword: async ({ user, url }) => {
-      await mailSender.send(user.email, 'Reset your Koru password', resetPasswordEmailHtml(url));
+      const html = await renderResetPasswordEmail(url, {
+        logoUrl: LOGO_URL,
+        supportPhone: SUPPORT_PHONE,
+        supportEmail: SUPPORT_EMAIL,
+      });
+
+      await mailSender.send(user.email, 'Reset your Koru password', html);
     },
     /** Explicit, not Better Auth's default, to keep the lifetime a decision on record. */
     resetPasswordTokenExpiresIn: 60 * 60,
   },
   emailVerification: {
     sendVerificationEmail: async ({ user, url }) => {
-      await mailSender.send(user.email, 'Verify your email', verificationEmailHtml(url));
+      const html = await renderVerificationEmail(url, {
+        logoUrl: LOGO_URL,
+        supportEmail: SUPPORT_EMAIL,
+        supportPhone: SUPPORT_PHONE,
+      });
+      await mailSender.send(user.email, 'Verify your email', html);
     },
     sendOnSignUp: true,
     autoSignInAfterVerification: true,

@@ -42,6 +42,9 @@ function build(overrides: {
       findUnique: vi.fn(() =>
         Promise.resolve({ id: CHURCH, name: overrides.churchName ?? 'Celebration Church' }),
       ),
+      findUniqueOrThrow: vi.fn(() =>
+        Promise.resolve({ name: overrides.churchName ?? 'Celebration Church' }),
+      ),
     },
     region: {
       findMany: vi.fn(({ where }: { where: { id: { in: string[] } } }) =>
@@ -213,8 +216,10 @@ describe('StaffService — invite email delivery (#61)', () => {
         html: expect.stringContaining('&lt;img src=x onerror=alert(1)&gt;'),
       }),
     );
+    // The template's own header logo is a legitimate <img>, so check for the
+    // exact malicious payload rather than any "<img" substring.
     expect(mail.send).not.toHaveBeenCalledWith(
-      expect.objectContaining({ html: expect.stringContaining('<img') }),
+      expect.objectContaining({ html: expect.stringContaining('<img src=x onerror=alert(1)>') }),
     );
     expect(mail.send).not.toHaveBeenCalledWith(
       expect.objectContaining({ html: expect.stringContaining('<a href="https://evil.example">') }),
@@ -1052,5 +1057,34 @@ describe('StaffService — last super_admin guard', () => {
     });
 
     await expect(service.remove(CHURCH, 'staff-1', superAdminCaller())).resolves.toBeUndefined();
+  });
+});
+
+describe('StaffService.remove — staff-removed email (#70)', () => {
+  function superAdminCaller() {
+    return { id: 'caller-1', churchId: CHURCH, role: 'super_admin', scopes: [] } as never;
+  }
+
+  it('sends a staff_removed email to the address captured before the row is deleted', async () => {
+    const { service, mail } = build({ churchName: 'Celebration Church' });
+
+    await service.remove(CHURCH, STAFF.id, superAdminCaller());
+
+    expect(mail.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        churchId: CHURCH,
+        category: 'staff_removed',
+        to: STAFF.email,
+        recipientStaffId: undefined,
+        subject: expect.stringContaining('Celebration Church'),
+      }),
+    );
+  });
+
+  it('does not throw when the mail send fails — removal already succeeded', async () => {
+    const { service, prisma } = build({ mailSendThrows: true });
+
+    await expect(service.remove(CHURCH, STAFF.id, superAdminCaller())).resolves.toBeUndefined();
+    expect(prisma.staff.delete).toHaveBeenCalled();
   });
 });

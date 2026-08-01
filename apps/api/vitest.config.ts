@@ -20,6 +20,10 @@ export default defineConfig({
       BETTER_AUTH_SECRET: 'unit-test-value-never-signs-anything-real',
       BETTER_AUTH_URL: 'http://localhost:3001',
       WEB_ORIGIN: 'http://localhost:3000',
+      SUPPORT_EMAIL: 'support@example.test',
+      SUPPORT_PHONE: '+234 000 000 0000',
+      LOGO_URL: 'https://example.test/logo.png',
+      RESEND_WEBHOOK_SECRET: 'unit-test-value-never-verifies-anything-real',
     },
   },
   plugins: [

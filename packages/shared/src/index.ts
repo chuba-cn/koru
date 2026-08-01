@@ -28,12 +28,14 @@ export const koboToBigint = (kobo: Kobo): bigint => {
 export * from './api.js';
 export * from './branch.js';
 export * from './church.js';
+export * from './email-log.js';
 export * from './giving.js';
 export * from './mask.js';
 export * from './member.js';
 export * from './onboarding.js';
 export * from './pagination.js';
 export * from './region.js';
+export * from './resend-webhook.js';
 export * from './schemas.js';
 export * from './settlement-account.js';
 export * from './staff.js';

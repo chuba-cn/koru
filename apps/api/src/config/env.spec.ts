@@ -3,8 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const configSpy = vi.fn();
 vi.mock('dotenv', () => ({ config: configSpy }));
 
-// Proving the VITEST-unset branch needs a fresh module instance, since
-// process.env.VITEST is already true for every test in this suite.
 describe('config/env.ts dotenv gating', () => {
   const originalVitest = process.env.VITEST;
 

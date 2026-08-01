@@ -102,3 +102,7 @@ export function requireEnvPairOrNone(
 
   return { first, second };
 }
+
+export const SUPPORT_EMAIL = requireEnv('SUPPORT_EMAIL');
+export const SUPPORT_PHONE = requireEnv('SUPPORT_PHONE');
+export const LOGO_URL = requireEnv('LOGO_URL');

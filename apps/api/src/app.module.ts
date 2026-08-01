@@ -29,7 +29,7 @@ import { StaffModule } from './staff/staff.module';
     MemberModule,
     SettlementAccountModule,
     OnboardingModule,
-    AuthModule.forRoot({ auth }),
+    AuthModule.forRoot({ auth, bodyParser: { rawBody: true } }),
   ],
   providers: [
     {
