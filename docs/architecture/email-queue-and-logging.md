@@ -22,6 +22,9 @@ status. The request that triggered the email never waits on any of that.
 | [`email.processor.ts`](../../apps/api/src/notifications/email.processor.ts) | The worker. The only thing that calls `mailSender.send(...)` for real. |
 | [`queue.module.ts`](../../apps/api/src/queue/queue.module.ts) | Wires the Redis connection and registers the `email` queue — no email-specific code lives here. |
 | `EmailLog` (Prisma model) | The durable record. Every send KORU ever attempts has exactly one row. |
+| [`resend-webhook.controller.ts`](../../apps/api/src/notifications/resend-webhook.controller.ts) / [`.service.ts`](../../apps/api/src/notifications/resend-webhook.service.ts) | Receives Resend's delivery-event callbacks and advances an `EmailLog` row past `sent` — the only way `delivered`/`bounced`/`complained` ever get set (#67). |
+| [`email-log.controller.ts`](../../apps/api/src/notifications/email-log.controller.ts) / [`.service.ts`](../../apps/api/src/notifications/email-log.service.ts) | The staff-facing view: list a church's send history (scope-narrowed the same way as region/branch/settlement-account) and resend one that failed (#68). |
+| [`@koru/emails`](../../packages/emails) | Every outbound template as a React Email component, plus the shared brand layout (logo, colors, support footer) they all render through (#79). |
 
 ```mermaid
 graph TB
@@ -123,9 +126,18 @@ stateDiagram-v2
     RetryCheck --> queued: attempts remain<br/>(BullMQ retries automatically)
     RetryCheck --> failed: this was the last attempt
 
-    sent --> [*]
+    sent --> delivered: Resend webhook — email.delivered (#67)
+    sent --> bounced: Resend webhook — email.bounced
+    sent --> complained: Resend webhook — email.complained
+    sent --> failed: Resend webhook — email.failed
+
+    delivered --> [*]
+    bounced --> [*]: staff can manually resend (#68)
+    complained --> [*]: staff can manually resend (#68)
     failed --> [*]: staff can manually resend (#68)
 ```
+
+`sent` only means the provider *accepted* the email — it says nothing about what happened after. Everything past that point is Resend telling KORU, asynchronously, over its own webhook: delivered to the inbox, bounced, marked as spam, or failed outright. `EmailProcessor` (the queue worker) never sets any of these four statuses itself; `ResendWebhookService` is the only writer for all of them.
 
 **A row at `queued` can now mean one of two different things, and nothing today tells them apart.**
 Either it's genuinely still being attempted (retries remaining, or the job hasn't been picked up
@@ -185,6 +197,47 @@ requiring an actual round-trip to Redis — the only way this endpoint can tell 
 
 ---
 
+## Delivery status past `sent`: the Resend webhook (#67)
+
+`POST /webhooks/resend` is `@AllowAnonymous()` and excluded from Swagger — Resend calls it, not a
+KORU user, and it carries no session. Trust comes entirely from a signature, not from being on the
+network: Resend signs every callback with `RESEND_WEBHOOK_SECRET`, and `ResendWebhookService`
+verifies that signature (via `resend`'s own `webhooks.verify()`, the Standard Webhooks HMAC scheme)
+before it does anything else — an invalid or missing signature is a `401`, and nothing is read from
+or written to the database first.
+
+This is also why `AuthModule.forRoot` is configured with `bodyParser: { rawBody: true }`: signature
+verification needs the exact bytes Resend signed, not a re-serialized `JSON.parse`'d body, which can
+differ in whitespace or key order and would fail verification even for a genuine event.
+
+Resend has 19 event types; only four are acted on (`email.delivered`, `email.bounced`,
+`email.complained`, `email.failed` — see the state diagram above). Everything else — `email.opened`,
+`domain.*`, `contact.*`, `suppressions.*`, and so on — is parsed successfully and acknowledged with
+`200`, then dropped, deliberately. Rejecting an event type this receiver doesn't act on would be
+wrong: Resend retries a webhook until it gets a `2xx`, so a closed schema or a hard failure on an
+unmapped type would turn "we don't care about this one" into an endless retry loop.
+
+The event's `data.email_id` is Resend's own provider-side message id, matched against
+`EmailLog.providerMessageId` (set by `EmailProcessor` from `mailSender.send`'s return value). A
+webhook for a message id with no matching row — the row predates this feature, or belongs to a
+different KORU deployment sharing the same Resend account — is logged and acknowledged, never a
+`500`.
+
+## Staff-facing visibility and resend (#68)
+
+`GET /churches/:churchId/email-logs` and `POST .../:id/resend` sit behind the same admin tier as
+`settlement-account` (`super_admin`/`regional_admin`/`branch_admin`/`finance` — no `recorder`), and
+the same scope-narrowing pattern as `region`/`branch`: a delegated caller sees a log if it's
+church-wide (no staff or member recipient tied to it) or if the recipient's own scope falls within
+the caller's covered branches; `super_admin` sees every row in the church.
+
+Resend replays `EmailLog.renderedHtml` verbatim through `MailService.send` — it does not re-render
+the template. That matters for the invite-email case in particular: the token embedded in an old
+invite email is exactly the token a resend still delivers, not a freshly minted one. Only `failed`,
+`bounced`, and `complained` rows are resendable; resending a `queued`, `sent`, or `delivered` row is
+a `409`, and resending an id outside the caller's church or scope is a `404`, not a `403` — the same
+"don't confirm existence" reasoning used everywhere else in this codebase.
+
 ## Related decisions
 
 - [ADR-0014](../../apps/api/docs/adr/0014-resend-for-transactional-email.md) — why Resend, and why
@@ -228,7 +281,14 @@ Nudge-epic SMS queue, say) should reuse this same `QueueModule`/Redis connection
 stand up a second one — but that's that epic's own decision to make when it exists, not something
 this system pre-authorizes.
 
-**Automatic requeue of an exhausted job.** Once a job reaches `EmailLog.status: failed`, nothing
-retries it automatically ever again. A human clicking resend (#68) is the only way back in — cheaper
-to build, and it means a systemic provider outage doesn't quietly retry thousands of dead jobs the
-moment Resend comes back up.
+**Automatic requeue of an exhausted job, or of a `bounced`/`complained` row.** Once a job reaches
+`EmailLog.status: failed` (or the webhook marks it `bounced`/`complained`), nothing retries it
+automatically. A human clicking resend (#68) is the only way back in — cheaper to build, and it
+means a systemic provider outage, or a spam-complaint spike, doesn't quietly retry thousands of rows
+the moment Resend recovers.
+
+**A reconciliation sweep for webhook delivery, the same gap #67 shares with #76.** If Resend's
+webhook call itself never arrives — its own outage, or the receiver being down for longer than
+Resend retries — a row can sit at `sent` forever with no further status update and no automated way
+to notice. Nothing today polls Resend's API to reconcile a stale `sent` row against the provider's
+own record of what actually happened to it.

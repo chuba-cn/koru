@@ -1,3 +1,4 @@
+import { renderInviteEmail, renderStaffRemovedEmail } from '@koru/emails';
 import type {
   CreateStaffInput,
   LinkLoginInput,
@@ -22,11 +23,10 @@ import {
   assertValidDirection,
   buildCursorPage,
 } from '../common/cursor-pagination';
-import { requireOriginList } from '../config/env';
+import { LOGO_URL, requireOriginList, SUPPORT_EMAIL, SUPPORT_PHONE } from '../config/env';
 import { Prisma, StaffRole } from '../generated/prisma/client';
 import { MailService } from '../notifications/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { inviteEmailHtml } from './invite-email-template';
 import { StaffInviteService } from './staff-invite.service';
 
 /**
@@ -41,7 +41,7 @@ const inviteLink = (token: string) =>
   `${WEB_APP_ORIGIN}/invite/accept?token=${encodeURIComponent(token)}`;
 
 /**
- * info: The roles each delegated (non-super_admin) tier may create. super_admin
+ * The roles each delegated (non-super_admin) tier may create. super_admin
  * is handled separately, as the one caller with no single ceiling at all.
  */
 const DELEGATED_ROLE_CEILING: Partial<Record<StaffRole, StaffRole[]>> = {
@@ -265,7 +265,11 @@ export class StaffService {
         to: staff.email,
         recipientStaffId: staff.id,
         subject: `You have been invited to ${churchName} on Koru`,
-        html: inviteEmailHtml(churchName, inviteLink(token)),
+        html: await renderInviteEmail(churchName, inviteLink(token), {
+          logoUrl: LOGO_URL,
+          supportEmail: SUPPORT_EMAIL,
+          supportPhone: SUPPORT_PHONE,
+        }),
       });
     } catch (error) {
       this.logger.error(`Could not queue invite email for staff ${staff.id}: ${error}`);
@@ -415,6 +419,28 @@ export class StaffService {
       }
       await tx.staff.delete({ where: { id } });
     });
+
+    const church = await this.prisma.church.findUniqueOrThrow({
+      where: { id: churchId },
+      select: { name: true },
+    });
+
+    try {
+      await this.mail.send({
+        churchId,
+        category: 'staff_removed',
+        to: staff.email,
+        recipientStaffId: undefined,
+        subject: `You have been removed from ${church.name} on Koru`,
+        html: await renderStaffRemovedEmail(church.name, {
+          logoUrl: LOGO_URL,
+          supportEmail: SUPPORT_EMAIL,
+          supportPhone: SUPPORT_PHONE,
+        }),
+      });
+    } catch (error) {
+      this.logger.error(`Could not queue staff-removed email for ${staff.email}: ${error}`);
+    }
   }
 
   async reissueInvite(churchId: string, id: string, caller: TenantStaff) {
