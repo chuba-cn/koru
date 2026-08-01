@@ -25,9 +25,9 @@ function fakePrisma(log: { id: string } | null = { id: 'log-1' }) {
 }
 
 const HEADERS = {
-  'webhook-id': 'msg-1',
-  'webhook-timestamp': '1700000000',
-  'webhook-signature': 'v1,valid-signature',
+  'svix-id': 'msg-1',
+  'svix-timestamp': '1700000000',
+  'svix-signature': 'v1,valid-signature',
 };
 
 describe('ResendWebhookService.handle', () => {

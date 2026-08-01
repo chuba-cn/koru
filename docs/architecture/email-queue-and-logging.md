@@ -201,10 +201,13 @@ requiring an actual round-trip to Redis — the only way this endpoint can tell 
 
 `POST /webhooks/resend` is `@AllowAnonymous()` and excluded from Swagger — Resend calls it, not a
 KORU user, and it carries no session. Trust comes entirely from a signature, not from being on the
-network: Resend signs every callback with `RESEND_WEBHOOK_SECRET`, and `ResendWebhookService`
-verifies that signature (via `resend`'s own `webhooks.verify()`, the Standard Webhooks HMAC scheme)
-before it does anything else — an invalid or missing signature is a `401`, and nothing is read from
-or written to the database first.
+network: Resend delivers its webhooks over Svix and signs every callback with
+`RESEND_WEBHOOK_SECRET`; `ResendWebhookService` verifies that signature (via `resend`'s own
+`webhooks.verify()`) before it does anything else — an invalid or missing signature is a `401`, and
+nothing is read from or written to the database first. The signature lives in the `svix-id` /
+`svix-timestamp` / `svix-signature` request headers, not the `webhook-*` names `resend`'s own
+`verify()` options object happens to call them internally — confirmed against a real Resend webhook
+delivery (#130), since every generic write-up of this API assumes the "webhook-*" names.
 
 This is also why `AuthModule.forRoot` is configured with `bodyParser: { rawBody: true }`: signature
 verification needs the exact bytes Resend signed, not a re-serialized `JSON.parse`'d body, which can

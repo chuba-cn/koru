@@ -28,12 +28,16 @@ export class ResendWebhookService {
     let payload: unknown;
 
     try {
+      // Resend delivers webhooks over Svix, whose wire headers are
+      // Svix-Id/Svix-Timestamp/Svix-Signature (lowercased by Express) — not
+      // "webhook-*", despite that being the name resend's own verify() options
+      // use internally. Confirmed against a real Resend webhook delivery.
       payload = this.client.webhooks.verify({
         payload: rawBody.toString('utf-8'),
         headers: {
-          id: String(headers['webhook-id'] ?? ''),
-          timestamp: String(headers['webhook-timestamp'] ?? ''),
-          signature: String(headers['webhook-signature'] ?? ''),
+          id: String(headers['svix-id'] ?? ''),
+          timestamp: String(headers['svix-timestamp'] ?? ''),
+          signature: String(headers['svix-signature'] ?? ''),
         },
         webhookSecret: WEBHOOK_SECRET,
       });

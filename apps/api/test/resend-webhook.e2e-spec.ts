@@ -18,9 +18,9 @@ function signedHeaders(payload: string) {
     .digest('base64');
 
   return {
-    'webhook-id': id,
-    'webhook-timestamp': String(timestamp),
-    'webhook-signature': `v1,${signature}`,
+    'svix-id': id,
+    'svix-timestamp': String(timestamp),
+    'svix-signature': `v1,${signature}`,
   };
 }
 
@@ -51,9 +51,9 @@ describe('Resend webhook receiver (e2e, #67)', () => {
 
     await request(app.getHttpServer())
       .post('/webhooks/resend')
-      .set('webhook-id', 'msg_e2e')
-      .set('webhook-timestamp', String(Math.floor(Date.now() / 1000)))
-      .set('webhook-signature', 'v1,not-the-real-signature')
+      .set('svix-id', 'msg_e2e')
+      .set('svix-timestamp', String(Math.floor(Date.now() / 1000)))
+      .set('svix-signature', 'v1,not-the-real-signature')
       .set('Content-Type', 'application/json')
       .send(body)
       .expect(401);
