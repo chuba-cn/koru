@@ -8,7 +8,7 @@ export const PLEDGE_CADENCES = ['none', 'weekly', 'monthly', 'payday', 'custom']
 export const PLEDGE_STATUSES = ['active', 'fulfilled', 'cancelled'] as const;
 export const PLEDGE_SOURCES = ['self', 'admin', 'imported'] as const;
 export const PAYMENT_CHANNELS = ['paystack_transfer', 'cash', 'pos', 'imported'] as const;
-export const PAYMENT_STATUSES = ['pending', 'success', 'failed', 'reversed'] as const;
+export const PAYMENT_STATES = ['settled', 'refunded', 'reversed'] as const;
 
 const CampaignRefSchema = z.object({
   id: z.uuid(),
@@ -33,8 +33,8 @@ export const PaymentHistoryItemSchema = z.object({
   pledgeId: z.uuid().nullable(),
   amountKobo: z.number().int().nonnegative(),
   channel: z.enum(PAYMENT_CHANNELS),
-  status: z.enum(PAYMENT_STATUSES),
-  paidAt: z.iso.datetime().nullable(),
+  state: z.enum(PAYMENT_STATES),
+  paidAt: z.iso.datetime(),
   createdAt: z.iso.datetime(),
 });
 

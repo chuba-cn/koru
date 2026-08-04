@@ -67,13 +67,6 @@ enum PaymentChannel {
   imported
 }
 
-enum PaymentStatus {
-  pending
-  success
-  failed
-  reversed
-}
-
 enum EmailCategory {
   staff_invite
   staff_removed
@@ -98,6 +91,64 @@ enum WebhookStatus {
   failed
 }
 
+enum DonationIntentStatus {
+  pending
+  processing
+  succeeded
+  failed
+  expired
+  cancelled
+}
+
+enum PaymentAttemptStatus {
+  pending
+  processing
+  succeeded
+  failed
+  expired
+}
+
+enum PaymentState {
+  settled
+  refunded
+  reversed
+}
+
+enum LedgerAccount {
+  gateway_clearing
+  campaign_giving
+  fees
+  settlement_payout
+  refunds
+  cash_on_hand
+}
+
+enum LedgerEntryType {
+  debit
+  credit
+}
+
+enum DomainEventType {
+  donation_intent_created
+  payment_attempt_succeeded
+  payment_settled
+  refund_requested
+  refund_processed
+}
+
+enum RefundStatus {
+  pending
+  approved
+  rejected
+  processed
+}
+
+enum CashApprovalStatus {
+  pending
+  approved
+  rejected
+}
+
 model Church {
   id                  String   @id @default(uuid())
   name                String
@@ -105,13 +156,23 @@ model Church {
   paystackBusinessRef String?
   createdAt           DateTime @default(now())
 
-  regions            Region[]
-  branches           Branch[]
-  members            Member[]
-  staff              Staff[]
-  settlementAccounts SettlementAccount[]
-  campaigns          Campaign[]
-  emailLogs          EmailLog[]
+  regions               Region[]
+  branches              Branch[]
+  members               Member[]
+  staff                 Staff[]
+  settlementAccounts    SettlementAccount[]
+  campaigns             Campaign[]
+  emailLogs             EmailLog[]
+  donationIntents       DonationIntent[]
+  paymentAttempts       PaymentAttempt[]
+  payments              Payment[]
+  ledgerTransactions    LedgerTransaction[]
+  ledgerEntries         LedgerEntry[]
+  domainEvents          DomainEvent[]
+  refundRequests        RefundRequest[]
+  auditLogs             AuditLog[]
+  campaignBalances      CampaignBalance[]
+  memberGivingSummaries MemberGivingSummary[]
 }
 
 model Region {
@@ -139,6 +200,11 @@ model Branch {
   region             Region?             @relation(fields: [regionId], references: [id], onDelete: SetNull)
   members            Member[]
   settlementAccounts SettlementAccount[]
+  donationIntents    DonationIntent[]
+  paymentAttempts    PaymentAttempt[]
+  payments           Payment[]
+  ledgerEntries      LedgerEntry[]
+  refundRequests     RefundRequest[]
 
   @@unique([churchId, name])
   @@index([regionId])
@@ -156,10 +222,12 @@ model Member {
   emailLogsReceived EmailLog[]
   createdAt         DateTime   @default(now())
 
-  church     Church  @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  homeBranch Branch? @relation(fields: [homeBranchId], references: [id], onDelete: SetNull)
-  userId     String?
-  user       User?   @relation("MemberUser", fields: [userId], references: [id], onDelete: SetNull)
+  church          Church               @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  homeBranch      Branch?              @relation(fields: [homeBranchId], references: [id], onDelete: SetNull)
+  userId          String?
+  user            User?                @relation("MemberUser", fields: [userId], references: [id], onDelete: SetNull)
+  donationIntents DonationIntent[]
+  givingSummary   MemberGivingSummary?
 
   @@unique([churchId, phone])
   @@index([userId])
@@ -173,16 +241,21 @@ model Staff {
   email            String
   passwordHash     String?
   role             StaffRole
-  paymentsRecorded Payment[]
+  paymentsRecorded Payment[] @relation("PaymentsRecorded")
   createdAt        DateTime  @default(now())
 
-  church            Church        @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  church            Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
   scopes            StaffScope[]
   invites           StaffInvite[]
   campaignsCreated  Campaign[]
   emailLogsReceived EmailLog[]
-  userId            String?       @unique
-  user              User?         @relation("StaffUser", fields: [userId], references: [id], onDelete: SetNull)
+  attemptsRecorded  PaymentAttempt[] @relation("PaymentAttemptsRecorded")
+  cashApprovals     PaymentAttempt[] @relation("PaymentAttemptCashApprovals")
+  refundsRequested  RefundRequest[]  @relation("RefundsRequested")
+  refundsApproved   RefundRequest[]  @relation("RefundsApproved")
+  auditLogs         AuditLog[]
+  userId            String?          @unique
+  user              User?            @relation("StaffUser", fields: [userId], references: [id], onDelete: SetNull)
 
   @@unique([churchId, email])
   @@index([churchId, fullName, id])
@@ -258,6 +331,10 @@ model Campaign {
   settlementAccount SettlementAccount @relation(fields: [settlementAccountId], references: [id])
   createdBy         Staff?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
+  donationIntents DonationIntent[]
+  ledgerEntries   LedgerEntry[]
+  balance         CampaignBalance?
+
   @@index([churchId])
   @@index([settlementAccountId])
   @@index([scopeType, scopeRefId])
@@ -273,39 +350,222 @@ model Pledge {
   source           PledgeSource  @default(self)
   createdAt        DateTime      @default(now())
 
-  campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  member   Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  payments Payment[]
+  campaign        Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  member          Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  payments        Payment[]
+  donationIntents DonationIntent[]
 
   @@index([campaignId])
   @@index([memberId])
 }
 
+model DonationIntent {
+  id             String               @id @default(uuid())
+  churchId       String
+  branchId       String?
+  campaignId     String
+  memberId       String
+  pledgeId       String?
+  amountKobo     BigInt
+  idempotencyKey String
+  status         DonationIntentStatus @default(pending)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  church   Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  branch   Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  // Restrict, not Cascade: deleting a Campaign must never take real giving
+  // history with it. Per ADR-0016, that history stays visible and provable —
+  // a Campaign with intents against it isn't deletable at all.
+  campaign Campaign         @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  member   Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  pledge   Pledge?          @relation(fields: [pledgeId], references: [id], onDelete: SetNull)
+  attempts PaymentAttempt[]
+
+  @@unique([churchId, idempotencyKey])
+  @@index([churchId, status])
+  @@index([campaignId])
+  @@index([memberId])
+}
+
+model PaymentAttempt {
+  id                   String               @id @default(uuid())
+  churchId             String
+  branchId             String?
+  donationIntentId     String
+  channel              PaymentChannel
+  status               PaymentAttemptStatus @default(pending)
+  providerReference    String?              @unique
+  virtualAccountNumber String?
+  virtualAccountBank   String?
+  amountKobo           BigInt
+  expiresAt            DateTime?
+  cashApprovalStatus   CashApprovalStatus?
+  cashApprovedById     String?
+  recordedById         String?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  church         Church         @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  branch         Branch?        @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  donationIntent DonationIntent @relation(fields: [donationIntentId], references: [id], onDelete: Cascade)
+  cashApprovedBy Staff?         @relation("PaymentAttemptCashApprovals", fields: [cashApprovedById], references: [id], onDelete: SetNull)
+  recordedBy     Staff?         @relation("PaymentAttemptsRecorded", fields: [recordedById], references: [id], onDelete: SetNull)
+  payment        Payment?
+
+  @@index([churchId, status, createdAt])
+  @@index([donationIntentId])
+}
+
 model Payment {
   id                   String         @id @default(uuid())
+  churchId             String
+  branchId             String?
   campaignId           String
   memberId             String?
   pledgeId             String?
+  paymentAttemptId     String?        @unique
   amountKobo           BigInt
   channel              PaymentChannel
-  status               PaymentStatus  @default(pending)
+  state                PaymentState   @default(settled)
   paystackReference    String?        @unique
   virtualAccountNumber String?
-  virtualAcoountBank   String?
-  expiresAt            DateTime?
+  virtualAccountBank   String?
   recordedById         String?
-  paidAt               DateTime?
+  paidAt               DateTime
   createdAt            DateTime       @default(now())
 
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  member     Member?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
-  pledge     Pledge?  @relation(fields: [pledgeId], references: [id], onDelete: SetNull)
-  recordedBy Staff?   @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+  church         Church          @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  branch         Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  // Restrict, not Cascade: a settled Payment is immutable per ADR-0016 — its
+  // Campaign can never be deleted out from under it.
+  campaign       Campaign        @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  member         Member?         @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  pledge         Pledge?         @relation(fields: [pledgeId], references: [id], onDelete: SetNull)
+  paymentAttempt PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+  recordedBy     Staff?          @relation("PaymentsRecorded", fields: [recordedById], references: [id], onDelete: SetNull)
+  refundRequests RefundRequest[]
 
+  @@index([churchId])
   @@index([campaignId])
   @@index([memberId])
   @@index([pledgeId])
-  @@index([status])
+}
+
+model LedgerTransaction {
+  id        String   @id @default(uuid())
+  churchId  String
+  reason    String
+  createdAt DateTime @default(now())
+
+  church  Church        @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  entries LedgerEntry[]
+
+  @@index([churchId, createdAt])
+}
+
+model LedgerEntry {
+  id            String          @id @default(uuid())
+  transactionId String
+  churchId      String
+  branchId      String?
+  campaignId    String?
+  account       LedgerAccount
+  entryType     LedgerEntryType
+  amountKobo    BigInt
+  dedupeKey     String          @unique
+  createdAt     DateTime        @default(now())
+
+  transaction LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  church      Church            @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  branch      Branch?           @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  campaign    Campaign?         @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([churchId, createdAt])
+  @@index([campaignId, entryType])
+}
+
+model DomainEvent {
+  id          String          @id @default(uuid())
+  churchId    String
+  type        DomainEventType
+  payload     Json
+  publishedAt DateTime?
+  createdAt   DateTime        @default(now())
+
+  church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+
+  @@index([churchId, createdAt])
+}
+
+model RefundRequest {
+  id            String       @id @default(uuid())
+  churchId      String
+  branchId      String?
+  paymentId     String
+  amountKobo    BigInt
+  reason        String
+  status        RefundStatus @default(pending)
+  requestedById String?
+  approvedById  String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  church      Church  @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  branch      Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  payment     Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  // SetNull, not Restrict: a Staff member who ever requested a refund must
+  // still be removable (StaffService.remove hard-deletes). Who requested it
+  // is preserved in AuditLog, which is the durable record for this fact —
+  // this FK is a convenience join, not the fact's only home.
+  requestedBy Staff?  @relation("RefundsRequested", fields: [requestedById], references: [id], onDelete: SetNull)
+  approvedBy  Staff?  @relation("RefundsApproved", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([churchId, status])
+  @@index([paymentId])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  churchId     String
+  actorStaffId String?
+  action       String
+  entityType   String
+  entityId     String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  church     Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  actorStaff Staff? @relation(fields: [actorStaffId], references: [id], onDelete: SetNull)
+
+  @@index([churchId, createdAt])
+  @@index([entityType, entityId])
+}
+
+model CampaignBalance {
+  campaignId        String   @id
+  churchId          String
+  totalRaisedKobo   BigInt   @default(0)
+  totalRefundedKobo BigInt   @default(0)
+  updatedAt         DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  church   Church   @relation(fields: [churchId], references: [id], onDelete: Cascade)
+
+  @@index([churchId])
+}
+
+model MemberGivingSummary {
+  memberId       String    @id
+  churchId       String
+  totalGivenKobo BigInt    @default(0)
+  lastGivingAt   DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
+
+  @@index([churchId])
 }
 
 model EmailLog {
@@ -402,11 +662,17 @@ model Verification {
 }
 
 model WebhookEvent {
-  id              String        @default(uuid())
+  id              String        @id @default(uuid())
   paystackEventId String        @unique
   type            String
   payload         Json
+  churchId        String?
+  signature       String
+  rawBody         String
   status          WebhookStatus @default(received)
+  receivedAt      DateTime      @default(now())
   processedAt     DateTime?
   createdAt       DateTime      @default(now())
+
+  @@index([churchId])
 }

@@ -42,7 +42,7 @@ const PAYMENT_HISTORY_SELECT = {
   pledgeId: true,
   amountKobo: true,
   channel: true,
-  status: true,
+  state: true,
   paidAt: true,
   createdAt: true,
   campaign: { select: { id: true, title: true } },

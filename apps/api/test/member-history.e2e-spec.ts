@@ -44,12 +44,13 @@ async function seedGiving(
   });
   const payment = await prisma.payment.create({
     data: {
+      churchId,
       campaignId: campaign.id,
       memberId,
       pledgeId: pledge.id,
       amountKobo: 20_000_00n,
       channel: 'paystack_transfer',
-      status: 'success',
+      paidAt: new Date(),
     },
   });
   return { campaign, pledge, payment };
@@ -99,11 +100,12 @@ describe('Member pledge history (e2e)', () => {
     const { campaign } = await seedGiving(prisma, church.churchId, member.id, 'Building Fund');
     await prisma.payment.create({
       data: {
+        churchId: church.churchId,
         campaignId: campaign.id,
         memberId: null,
         amountKobo: 10_000_00n,
         channel: 'cash',
-        status: 'success',
+        paidAt: new Date(),
       },
     });
 
@@ -114,7 +116,7 @@ describe('Member pledge history (e2e)', () => {
 
     expect(res.body.items).toHaveLength(1);
     expect(res.body.items[0].amountKobo).toBe(2_000_000);
-    expect(res.body.items[0].status).toBe('success');
+    expect(res.body.items[0].state).toBe('settled');
     expect(res.body.items[0]).not.toHaveProperty('paystackReference');
   });
 
