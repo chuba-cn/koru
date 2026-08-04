@@ -39,6 +39,26 @@ _Avoid_: Manual payment, Cash entry
 A signed notification from Paystack, deduplicated so Reconciliation stays idempotent.
 _Avoid_: Callback, Hook
 
+**Ledger Entry**:
+One append-only debit or credit line in KORU's double-entry ledger, the source of truth for money
+raised. Never updated or deleted — a correction posts a new, compensating entry instead.
+_Avoid_: Transaction row, Log entry (a Ledger Entry is specifically one side of a balanced posting)
+
+**Domain Event**:
+A durable record of something that happened (a Donation Intent created, a Payment settled),
+written in the same transaction as the fact it describes, and relayed onward by a worker. KORU's
+transactional outbox.
+_Avoid_: Event, Message (too generic — Domain Event is specifically the outbox row)
+
+**Refund Request**:
+A staff-initiated request to reverse a settled Payment, requiring separate requesting and approving
+Staff — never the same person.
+_Avoid_: Refund (Refund Request is the request; the actual reversal is a compensating Ledger Entry)
+
+**Audit Log**:
+The durable record of a money-affecting action and who took it, kept for every Church.
+_Avoid_: Activity log, History (Audit Log is specifically the money-accountability record)
+
 ### Operations
 
 **Nudge**:

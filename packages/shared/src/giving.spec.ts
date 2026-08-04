@@ -22,7 +22,7 @@ const validPayment = {
   pledgeId: null,
   amountKobo: 2_000_000,
   channel: 'paystack_transfer',
-  status: 'success',
+  state: 'settled',
   paidAt: '2026-01-02T00:00:00.000Z',
   createdAt: '2026-01-01T00:00:00.000Z',
 };
@@ -55,15 +55,15 @@ describe('PaymentHistoryItemSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts a null paidAt, for a payment that has not settled yet', () => {
+  it('rejects a null paidAt — a Payment row only ever exists once settled', () => {
     expect(PaymentHistoryItemSchema.safeParse({ ...validPayment, paidAt: null }).success).toBe(
-      true,
+      false,
     );
   });
 
-  it('rejects a status outside the enum', () => {
-    expect(
-      PaymentHistoryItemSchema.safeParse({ ...validPayment, status: 'refunded' }).success,
-    ).toBe(false);
+  it('rejects a state outside the enum', () => {
+    expect(PaymentHistoryItemSchema.safeParse({ ...validPayment, state: 'pending' }).success).toBe(
+      false,
+    );
   });
 });

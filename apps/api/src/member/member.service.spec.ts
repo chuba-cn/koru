@@ -320,7 +320,7 @@ describe('MemberService', () => {
         pledgeId: null,
         amountKobo: 20_000_00n,
         channel: 'paystack_transfer',
-        status: 'success',
+        state: 'settled',
         paidAt: new Date(),
         createdAt: new Date(),
         campaign: { id: 'campaign-1', title: 'Building Fund' },
