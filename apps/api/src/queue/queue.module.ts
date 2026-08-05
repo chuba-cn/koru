@@ -4,7 +4,7 @@ import { requireEnv } from '../config/env';
 
 /**
  * @nestjs/bullmq's connection option takes a parsed { host, port, ... } shape,
- * not a raw connection string — Node's URL parser does the parsing so this
+ * not a raw connection string. Node's URL parser does the parsing so this
  * doesn't need its own regex or a new dependency.
  */
 const DEFAULT_REDIS_PORT = 6379;
@@ -41,6 +41,23 @@ export function parseRedisUrl(url: string) {
         backoff: { type: 'exponential', delay: 10_000 },
         removeOnComplete: { count: 100 },
         removeOnFail: { count: 1_000 },
+      },
+    }),
+    BullModule.registerQueue({
+      name: 'outbox-relay',
+      defaultJobOptions: {
+        attempts: 1,
+        removeOnComplete: { count: 20 },
+        removeOnFail: { count: 100 },
+      },
+    }),
+    BullModule.registerQueue({
+      name: 'domain-events',
+      defaultJobOptions: {
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: { count: 1_000 },
+        removeOnFail: { count: 5_000 },
       },
     }),
   ],

@@ -21,7 +21,12 @@ describe('HealthController wiring', () => {
 describe('HealthController.checkRedis', () => {
   it('reports ok when the queue client pings successfully', async () => {
     const emailQueue = { client: Promise.resolve({ info: vi.fn().mockResolvedValue('# Server') }) };
-    const controller = new HealthController({} as never, emailQueue as never);
+    const controller = new HealthController(
+      {} as never,
+      emailQueue as never,
+      {} as never,
+      {} as never,
+    );
 
     await expect(controller.checkRedis()).resolves.toEqual({ status: 'ok', redis: 'reachable' });
   });
@@ -30,11 +35,74 @@ describe('HealthController.checkRedis', () => {
     const emailQueue = {
       client: Promise.resolve({ info: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) }),
     };
-    const controller = new HealthController({} as never, emailQueue as never);
+    const controller = new HealthController(
+      {} as never,
+      emailQueue as never,
+      {} as never,
+      {} as never,
+    );
 
     await expect(controller.checkRedis()).resolves.toEqual({
       status: 'error',
       redis: 'unreachable',
     });
+  });
+});
+
+describe('HealthController.checkOutbox', () => {
+  it('reports zero backlog when nothing is unpublished', async () => {
+    const prisma = {
+      domainEvent: {
+        count: vi.fn().mockResolvedValue(0),
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+    };
+    const domainEventsQueue = {
+      getJobCounts: vi.fn().mockResolvedValue({ waiting: 0, failed: 0 }),
+    };
+    const relayQueue = { getJobCounts: vi.fn().mockResolvedValue({ failed: 0 }) };
+    const controller = new HealthController(
+      prisma as never,
+      {} as never,
+      domainEventsQueue as never,
+      relayQueue as never,
+    );
+
+    await expect(controller.checkOutbox()).resolves.toEqual({
+      status: 'ok',
+      unpublishedCount: 0,
+      oldestUnpublishedAgeSeconds: 0,
+      domainEventsWaiting: 0,
+      domainEventsFailed: 0,
+      relayFailed: 0,
+    });
+  });
+
+  it('reports the age of the oldest unpublished event and both queues failed counts, not just a total', async () => {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const prisma = {
+      domainEvent: {
+        count: vi.fn().mockResolvedValue(3),
+        findFirst: vi.fn().mockResolvedValue({ createdAt: fiveMinutesAgo }),
+      },
+    };
+    const domainEventsQueue = {
+      getJobCounts: vi.fn().mockResolvedValue({ waiting: 2, failed: 1 }),
+    };
+    const relayQueue = { getJobCounts: vi.fn().mockResolvedValue({ failed: 4 }) };
+    const controller = new HealthController(
+      prisma as never,
+      {} as never,
+      domainEventsQueue as never,
+      relayQueue as never,
+    );
+
+    const result = await controller.checkOutbox();
+
+    expect(result.unpublishedCount).toBe(3);
+    expect(result.oldestUnpublishedAgeSeconds).toBeGreaterThanOrEqual(295);
+    expect(result.domainEventsWaiting).toBe(2);
+    expect(result.domainEventsFailed).toBe(1);
+    expect(result.relayFailed).toBe(4);
   });
 });
