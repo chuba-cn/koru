@@ -6,7 +6,9 @@ import { AuthPrismaLifecycle } from './auth/auth-prisma-lifecycle.service';
 import { BranchModule } from './branch/branch.module';
 import { ChurchModule } from './church/church.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
+import { EventsModule } from './events/events.module';
 import { HealthModule } from './health/health.module';
+import { LedgerModule } from './ledger/ledger.module';
 import { MemberModule } from './member/member.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
@@ -21,6 +23,8 @@ import { StaffModule } from './staff/staff.module';
     HealthModule,
     PrismaModule,
     QueueModule,
+    EventsModule,
+    LedgerModule,
     NotificationsModule,
     ChurchModule,
     RegionModule,

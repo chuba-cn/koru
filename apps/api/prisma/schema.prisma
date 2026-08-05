@@ -473,7 +473,7 @@ model LedgerEntry {
   account       LedgerAccount
   entryType     LedgerEntryType
   amountKobo    BigInt
-  dedupeKey     String          @unique
+  dedupeKey     String
   createdAt     DateTime        @default(now())
 
   transaction LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
@@ -481,6 +481,7 @@ model LedgerEntry {
   branch      Branch?           @relation(fields: [branchId], references: [id], onDelete: SetNull)
   campaign    Campaign?         @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
+  @@unique([churchId, dedupeKey])
   @@index([churchId, createdAt])
   @@index([campaignId, entryType])
 }
@@ -496,6 +497,7 @@ model DomainEvent {
   church Church @relation(fields: [churchId], references: [id], onDelete: Cascade)
 
   @@index([churchId, createdAt])
+  @@index([publishedAt, createdAt])
 }
 
 model RefundRequest {

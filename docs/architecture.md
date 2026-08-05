@@ -184,11 +184,16 @@ graph LR
         docs["docs"]
         queue["queue"]
     end
+
+    subgraph moneyInfra["No routes — background only"]
+        events["events"]
+        ledger["ledger"]
+    end
 ```
 
 | Module | Routes | Protection |
 |---|---|---|
-| `health` | `GET /health`, `GET /health/db`, `GET /health/redis` | Public |
+| `health` | `GET /health`, `GET /health/db`, `GET /health/redis`, `GET /health/outbox` | Public |
 | `onboarding` | `POST /onboarding/church` | Session only — you have no church yet |
 | `church` | `GET`/`PATCH /churches/:churchId` | Tenant; `PATCH` also needs super_admin |
 | `region` | CRUD under `/churches/:churchId/regions` | Tenant; every mutation (`POST`/`PATCH`/`DELETE`) needs `super_admin`/`regional_admin`/`branch_admin` — `finance`/`recorder` read only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and narrowed to the caller's own scope for every delegated role (`super_admin` sees the whole church); mutations are authority-checked against that same scope via `ScopeService.assertCanActOnScope` (see [below](#scoping-a-mutation-is-not-the-same-check-as-scoping-a-list)) |
@@ -201,7 +206,7 @@ graph LR
 | `notifications` (email-logs) | `GET`/`POST :id/resend` under `/churches/:churchId/email-logs` | Tenant + `super_admin`/`regional_admin`/`branch_admin`/`finance` — no `recorder`; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed the same way as `region`/`branch` |
 | `notifications` (webhook) | `POST /webhooks/resend` | **Public** — trust comes from a verified signature, not a session; excluded from Swagger |
 
-Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar), `queue` (the BullMQ connection and the `email` queue, registered `@Global()` the same way `prisma` is). `notifications` is the odd one out — it also owns `MailService`/`EmailProcessor`, the first background-job code in the codebase, alongside the two routes above — see [Email queue and delivery logging](./architecture/email-queue-and-logging.md) for the full flow, retry/backoff behavior, the webhook, and why a queue exists here at all.
+Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar), `queue` (the BullMQ connection and the `email`, `outbox-relay`, and `domain-events` queues, registered `@Global()` the same way `prisma` is). `notifications` is the odd one out — it also owns `MailService`/`EmailProcessor`, the first background-job code in the codebase, alongside the two routes above — see [Email queue and delivery logging](./architecture/email-queue-and-logging.md) for the full flow, retry/backoff behavior, the webhook, and why a queue exists here at all. `events` and `ledger` carry no routes at all — `ledger` owns `LedgerService` and imports `events` for `OutboxService`; `events` owns `OutboxService` and the outbox relay worker, feeding `GET /health/outbox` above — see [Transactional outbox and relay](./architecture/transactional-outbox-and-relay.md).
 
 There are two Postgres connection pools per running app, not one: the Nest-managed `PrismaService`, and a second, separate `PrismaClient` in `auth/auth.ts` (needed because the Better Auth CLI loads that file standalone, outside Nest's bootstrap). Both now close on `app.close()` — `PrismaService` via its own `onModuleDestroy`, the auth one via `AuthPrismaLifecycle`, a small provider registered in `AppModule` for exactly this. Before this, `app.close()` (every e2e test's `afterAll`) left both pools open — see #94.
 
@@ -365,6 +370,7 @@ Deep-dive documents for flows too involved to describe here:
 - [Staff invitations](./architecture/staff-invitations.md) — how a super admin adds a colleague, how the token works, and what happens on re-use, re-issue and revoke.
 - [Delegated staff management](./architecture/delegated-staff-management.md) — how `regional_admin` and `branch_admin` create, update, remove, and manage the invites of staff below their own tier, all confined to their own scope.
 - [Email queue and delivery logging](./architecture/email-queue-and-logging.md) — how `MailService`/`EmailProcessor` send email through a durable BullMQ queue instead of inline, how retry/backoff and dead-lettering work, how the three interchangeable senders (Resend/SMTP/Console) are chosen, how the Resend webhook advances a log past `sent` to `delivered`/`bounced`/`complained`/`failed`, and how staff list and resend a church's send history.
+- [Transactional outbox and relay](./architecture/transactional-outbox-and-relay.md) — how `LedgerService.post` and `OutboxService.record` share one Postgres transaction so a ledger entry and its event commit atomically, how the relay's claim/enqueue/mark sequence uses `FOR UPDATE SKIP LOCKED` to let replicas run concurrently, and why the ordering is publish-then-mark, not the reverse.
 
 ---
 

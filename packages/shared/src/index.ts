@@ -28,6 +28,7 @@ export const koboToBigint = (kobo: Kobo): bigint => {
 export * from './api.js';
 export * from './branch.js';
 export * from './church.js';
+export * from './domain-events.js';
 export * from './email-log.js';
 export * from './giving.js';
 export * from './mask.js';

@@ -29,7 +29,7 @@ export class ResendWebhookService {
 
     try {
       // Resend delivers webhooks over Svix, whose wire headers are
-      // Svix-Id/Svix-Timestamp/Svix-Signature (lowercased by Express) — not
+      // Svix-Id/Svix-Timestamp/Svix-Signature (lowercased by Express), not
       // "webhook-*", despite that being the name resend's own verify() options
       // use internally. Confirmed against a real Resend webhook delivery.
       payload = this.client.webhooks.verify({

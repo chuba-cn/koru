@@ -13,6 +13,8 @@ export class HealthController {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('email') private readonly emailQueue: Queue,
+    @InjectQueue('domain-events') private readonly domainEventsQueue: Queue,
+    @InjectQueue('outbox-relay') private readonly relayQueue: Queue,
   ) {}
 
   @Get()
@@ -41,6 +43,32 @@ export class HealthController {
       campaigns,
       pledges,
       payments,
+    };
+  }
+
+  @Get('outbox')
+  async checkOutbox() {
+    const [unpublishedCount, oldestUnpublished, domainEventsCounts, relayCounts] =
+      await Promise.all([
+        this.prisma.domainEvent.count({ where: { publishedAt: null } }),
+        this.prisma.domainEvent.findFirst({
+          where: { publishedAt: null },
+          orderBy: { createdAt: 'asc' },
+          select: { createdAt: true },
+        }),
+        this.domainEventsQueue.getJobCounts('waiting', 'failed'),
+        this.relayQueue.getJobCounts('failed'),
+      ]);
+
+    return {
+      status: 'ok',
+      unpublishedCount,
+      oldestUnpublishedAgeSeconds: oldestUnpublished
+        ? Math.floor((Date.now() - oldestUnpublished.createdAt.getTime()) / 1_000)
+        : 0,
+      domainEventsWaiting: domainEventsCounts.waiting ?? 0,
+      domainEventsFailed: domainEventsCounts.failed ?? 0,
+      relayFailed: relayCounts.failed ?? 0,
     };
   }
 
