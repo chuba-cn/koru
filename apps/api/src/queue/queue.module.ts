@@ -60,6 +60,23 @@ export function parseRedisUrl(url: string) {
         removeOnFail: { count: 5_000 },
       },
     }),
+    BullModule.registerQueue({
+      name: 'payment-webhooks',
+      defaultJobOptions: {
+        attempts: 8,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: { count: 1_000 },
+        removeOnFail: { count: 5_000 },
+      },
+    }),
+    BullModule.registerQueue({
+      name: 'payment-expiry',
+      defaultJobOptions: {
+        attempts: 1,
+        removeOnComplete: { count: 20 },
+        removeOnFail: { count: 100 },
+      },
+    }),
   ],
   exports: [BullModule],
 })

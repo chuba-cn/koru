@@ -31,7 +31,8 @@ describe('API documentation surface (e2e)', () => {
     const yaml = await request(app.getHttpServer()).get('/schema.yaml').expect(200);
 
     for (const document of [JSON.stringify(json.body), yaml.text]) {
-      expect(document).not.toContain('paystackSubaccountCode');
+      expect(document).not.toContain('providerSubaccountCode');
+      expect(document).not.toContain('accountNumberHash');
       expect(document).not.toContain('passwordHash');
     }
   });

@@ -214,6 +214,28 @@ describe('LedgerService.post', () => {
     expect(outbox.record).not.toHaveBeenCalled();
   });
 
+  it("passes each entry's provider through to the row it writes, leaving it null when omitted", async () => {
+    const tx = fakeTx();
+    const outbox = fakeOutbox();
+    const service = new LedgerService(outbox as never);
+
+    const [clearing, giving] = balancedEntries();
+    await service.post(tx as never, {
+      churchId: CHURCH,
+      reason: 'paystack charge settled',
+      entries: [{ ...clearing, provider: 'paystack' as const }, giving],
+      eventPayload: EVENT_PAYLOAD,
+    });
+
+    const calls = tx.ledgerEntry.createMany.mock.calls as unknown as [
+      { data: { provider?: string }[] },
+    ][];
+    expect(calls).toHaveLength(1);
+    const data = calls[0][0].data;
+    expect(data[0]?.provider).toBe('paystack');
+    expect(data[1]?.provider).toBeUndefined();
+  });
+
   it('rejects a call where tx is the whole PrismaClient, not a transaction client', async () => {
     const outbox = fakeOutbox();
     const service = new LedgerService(outbox as never);

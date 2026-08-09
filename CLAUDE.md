@@ -6,8 +6,9 @@ Church pledge / project-giving SaaS for Nigeria. pnpm + Turborepo monorepo
 ## How work ships
 
 **Never commit to `main`** — it is protected and will reject a direct push. Every ticket gets a
-branch (`<type>/<issue>-<slug>`), a PR with `Closes #<n>`, green CI, and a squash-merge. See
-`docs/agents/ci-and-branching.md` for the loop, what CI runs, and the decisions behind it.
+branch (`<type>/<issue>-<slug>`), a PR with `Closes #<n>`, green CI, and a squash-merge. When an
+epic has several dependent tickets, stack them with `gh stack` instead of waiting for each merge.
+See `docs/agents/ci-and-branching.md` for the loop, what CI runs, and the decisions behind it.
 
 ## How the code works
 
@@ -39,7 +40,9 @@ Multi-context: a root `CONTEXT-MAP.md` points to a per-package `CONTEXT.md`. See
 
 ### CI and branching
 
-Branch-per-ticket, PR, green CI, squash-merge. See `docs/agents/ci-and-branching.md`.
+Branch-per-ticket, PR, green CI, squash-merge. An epic with dependent tickets uses **stacked PRs**
+(`gh stack`) rather than merging one ticket before starting the next. See
+`docs/agents/ci-and-branching.md`.
 
 ### Testing
 

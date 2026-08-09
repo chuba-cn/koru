@@ -117,7 +117,7 @@ describe('Member pledge history (e2e)', () => {
     expect(res.body.items).toHaveLength(1);
     expect(res.body.items[0].amountKobo).toBe(2_000_000);
     expect(res.body.items[0].state).toBe('settled');
-    expect(res.body.items[0]).not.toHaveProperty('paystackReference');
+    expect(res.body.items[0]).not.toHaveProperty('providerReference');
   });
 
   /**

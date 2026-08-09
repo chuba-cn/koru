@@ -12,6 +12,7 @@ import { LedgerModule } from './ledger/ledger.module';
 import { MemberModule } from './member/member.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
+import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
 import { RegionModule } from './region/region.module';
@@ -33,6 +34,7 @@ import { StaffModule } from './staff/staff.module';
     MemberModule,
     SettlementAccountModule,
     OnboardingModule,
+    PaymentsModule,
     AuthModule.forRoot({ auth, bodyParser: { rawBody: true } }),
   ],
   providers: [

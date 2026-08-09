@@ -107,6 +107,8 @@ export const SUPPORT_EMAIL = requireEnv('SUPPORT_EMAIL');
 export const SUPPORT_PHONE = requireEnv('SUPPORT_PHONE');
 export const LOGO_URL = requireEnv('LOGO_URL');
 
+export const SETTLEMENT_ACCOUNT_HASH_PEPPER = requireEnv('SETTLEMENT_ACCOUNT_HASH_PEPPER');
+
 /**
  * Defaults to enabled — production must actually schedule the outbox
  * relay. The e2e suite sets RELAY_SCHEDULE_ENABLED=false in .env.test
@@ -115,4 +117,8 @@ export const LOGO_URL = requireEnv('LOGO_URL');
  */
 export function isRelayScheduleEnabled(): boolean {
   return process.env.RELAY_SCHEDULE_ENABLED !== 'false';
+}
+
+export function isPaymentSweepScheduleEnabled(): boolean {
+  return process.env.PAYMENT_SWEEP_SCHEDULE_ENABLED !== 'false';
 }
