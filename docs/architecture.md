@@ -176,6 +176,18 @@ graph LR
         webhook["notifications<br/><i>webhooks/resend</i>"]
     end
 
+    subgraph banks["Session only"]
+        bank["settlement-account<br/><i>banks</i>"]
+    end
+
+    subgraph givingZone["VerifiedPhoneGuard"]
+        donations["payments<br/><i>me/churches/:churchId/donations</i>"]
+    end
+
+    subgraph payWebhook["Public — @AllowAnonymous"]
+        paystackWebhook["payments<br/><i>webhooks/paystack</i>"]
+    end
+
     subgraph infra["Infrastructure"]
         prisma["prisma"]
         auth["auth"]
@@ -188,25 +200,29 @@ graph LR
     subgraph moneyInfra["No routes — background only"]
         events["events"]
         ledger["ledger"]
+        gateway["payments/gateway"]
     end
 ```
 
 | Module | Routes | Protection |
 |---|---|---|
-| `health` | `GET /health`, `GET /health/db`, `GET /health/redis`, `GET /health/outbox` | Public |
+| `health` | `GET /health`, `GET /health/db`, `GET /health/redis`, `GET /health/outbox`, `GET /health/payments` | Public |
 | `onboarding` | `POST /onboarding/church` | Session only — you have no church yet |
 | `church` | `GET`/`PATCH /churches/:churchId` | Tenant; `PATCH` also needs super_admin |
 | `region` | CRUD under `/churches/:churchId/regions` | Tenant; every mutation (`POST`/`PATCH`/`DELETE`) needs `super_admin`/`regional_admin`/`branch_admin` — `finance`/`recorder` read only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and narrowed to the caller's own scope for every delegated role (`super_admin` sees the whole church); mutations are authority-checked against that same scope via `ScopeService.assertCanActOnScope` (see [below](#scoping-a-mutation-is-not-the-same-check-as-scoping-a-list)) |
 | `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; every mutation (`POST`/`PATCH`) needs `super_admin`/`regional_admin`/`branch_admin` — `finance`/`recorder` read only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed the same way as `region`; mutations are authority-checked the same way, including both sides of a move between regions |
 | `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; every route except clear-login is also open to `regional_admin`/`branch_admin`, capped by [delegated management](./architecture/delegated-staff-management.md); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
-| `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin, except `GET`, also open to `regional_admin`/`branch_admin`/`finance` (a deliberate, per-route exception to the class-level lock — see [`settlement-account.controller.spec.ts`](../apps/api/src/settlement-account/settlement-account.controller.spec.ts)); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed (a delegated caller's own branch(es) plus any church-wide account) |
+| `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin, except `GET`, also open to `regional_admin`/`branch_admin`/`finance` (a deliberate, per-route exception to the class-level lock — see [`settlement-account.controller.spec.ts`](../apps/api/src/settlement-account/settlement-account.controller.spec.ts)); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed (a delegated caller's own branch(es) plus any church-wide account); registering an account calls Paystack (bank lookup, name-enquiry, subaccount creation) before writing any row — see [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md) |
+| `settlement-account` (banks) | `GET /banks` | Session only — the Nigerian bank directory is the same for every church, so this is deliberately not nested under a church |
+| `payments` (donations) | `POST /me/churches/:churchId/donations` | Session + `VerifiedPhoneGuard`; **not rate limited** (#115 not built) — see [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md) for the accepted-gap statement and its mitigations |
+| `payments` (webhook) | `POST /webhooks/paystack` | **Public** — trust comes from a verified HMAC signature, not a session; excluded from Swagger |
 | `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard; all three lists are [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
 | `member` (join) | `GET /join/:churchId/branches`, `POST /join/:churchId` (201 create / 200 update) | Session; `POST` also needs a verified phone; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
 | `notifications` (email-logs) | `GET`/`POST :id/resend` under `/churches/:churchId/email-logs` | Tenant + `super_admin`/`regional_admin`/`branch_admin`/`finance` — no `recorder`; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed the same way as `region`/`branch` |
 | `notifications` (webhook) | `POST /webhooks/resend` | **Public** — trust comes from a verified signature, not a session; excluded from Swagger |
 
-Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar), `queue` (the BullMQ connection and the `email`, `outbox-relay`, and `domain-events` queues, registered `@Global()` the same way `prisma` is). `notifications` is the odd one out — it also owns `MailService`/`EmailProcessor`, the first background-job code in the codebase, alongside the two routes above — see [Email queue and delivery logging](./architecture/email-queue-and-logging.md) for the full flow, retry/backoff behavior, the webhook, and why a queue exists here at all. `events` and `ledger` carry no routes at all — `ledger` owns `LedgerService` and imports `events` for `OutboxService`; `events` owns `OutboxService` and the outbox relay worker, feeding `GET /health/outbox` above — see [Transactional outbox and relay](./architecture/transactional-outbox-and-relay.md).
+Infrastructure modules carry no routes of their own: `prisma` (database access), `auth` (Better Auth setup and our guards), `common` (validation pipe, error filter, shared DTOs), `config` (environment validation), `docs` (OpenAPI and Scalar), `queue` (the BullMQ connection and the `email`, `outbox-relay`, `domain-events`, `payment-webhooks`, and `payment-expiry` queues, registered `@Global()` the same way `prisma` is). `notifications` is the odd one out — it also owns `MailService`/`EmailProcessor`, the first background-job code in the codebase, alongside the two routes above — see [Email queue and delivery logging](./architecture/email-queue-and-logging.md) for the full flow, retry/backoff behavior, the webhook, and why a queue exists here at all. `events` and `ledger` carry no routes at all — `ledger` owns `LedgerService` and imports `events` for `OutboxService`; `events` owns `OutboxService` and the outbox relay worker, feeding `GET /health/outbox` above — see [Transactional outbox and relay](./architecture/transactional-outbox-and-relay.md). `payments/gateway` also carries no routes — it owns the `PaymentGateway` port and `PaystackAdapter`, imported by both `payments` and `settlement-account`; see [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md).
 
 There are two Postgres connection pools per running app, not one: the Nest-managed `PrismaService`, and a second, separate `PrismaClient` in `auth/auth.ts` (needed because the Better Auth CLI loads that file standalone, outside Nest's bootstrap). Both now close on `app.close()` — `PrismaService` via its own `onModuleDestroy`, the auth one via `AuthPrismaLifecycle`, a small provider registered in `AppModule` for exactly this. Before this, `app.close()` (every e2e test's `afterAll`) left both pools open — see #94.
 
@@ -371,6 +387,7 @@ Deep-dive documents for flows too involved to describe here:
 - [Delegated staff management](./architecture/delegated-staff-management.md) — how `regional_admin` and `branch_admin` create, update, remove, and manage the invites of staff below their own tier, all confined to their own scope.
 - [Email queue and delivery logging](./architecture/email-queue-and-logging.md) — how `MailService`/`EmailProcessor` send email through a durable BullMQ queue instead of inline, how retry/backoff and dead-lettering work, how the three interchangeable senders (Resend/SMTP/Console) are chosen, how the Resend webhook advances a log past `sent` to `delivered`/`bounced`/`complained`/`failed`, and how staff list and resend a church's send history.
 - [Transactional outbox and relay](./architecture/transactional-outbox-and-relay.md) — how `LedgerService.post` and `OutboxService.record` share one Postgres transaction so a ledger entry and its event commit atomically, how the relay's claim/enqueue/mark sequence uses `FOR UPDATE SKIP LOCKED` to let replicas run concurrently, and why the ordering is publish-then-mark, not the reverse.
+- [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md) — how a member's donation becomes a virtual account, a verified charge, and a ledger posting behind the `PaymentGateway` port; why the webhook is a trigger and never a fact; how an unpaid virtual account's expiry is detected when Paystack sends no failure webhook at all; and the accepted, time-boxed gap around rate limiting.
 
 ---
 

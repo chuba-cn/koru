@@ -1,7 +1,12 @@
 import type { DomainEventPayload } from '@koru/shared';
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { OutboxService } from '../events/outbox.service';
-import type { LedgerAccount, LedgerEntryType, Prisma } from '../generated/prisma/client';
+import type {
+  LedgerAccount,
+  LedgerEntryType,
+  PaymentProvider,
+  Prisma,
+} from '../generated/prisma/client';
 import { Prisma as PrismaNamespace } from '../generated/prisma/client';
 import { assertTransactionClient } from '../prisma/assert-transaction-client';
 
@@ -11,6 +16,8 @@ type LedgerEntryInput = {
   amountKobo: bigint;
   branchId?: string;
   campaignId?: string;
+  /** A filter dimension for per provider reconciliation */
+  provider?: PaymentProvider;
   dedupeKey: string;
 };
 
@@ -67,6 +74,7 @@ export class LedgerService {
           account: entry.account,
           entryType: entry.entryType,
           amountKobo: entry.amountKobo,
+          provider: entry.provider,
           dedupeKey: entry.dedupeKey,
         })),
       });
@@ -91,7 +99,7 @@ export class LedgerService {
     return { transaction, event };
   }
 
-  /** The database does not enforce denormalized churchId (ADR-0018) — this does. */
+  /** The database does not enforce denormalized churchId (ADR-0018). This does. */
   private async assertEntriesBelongToChurch(
     tx: Prisma.TransactionClient,
     churchId: string,

@@ -101,4 +101,17 @@ describe('Health (e2e)', () => {
     expect(res.body.unpublishedCount).toBeGreaterThanOrEqual(1);
     expect(res.body.oldestUnpublishedAgeSeconds).toBeGreaterThanOrEqual(0);
   });
+
+  it('GET /health/payments reports zero backlog with nothing received', async () => {
+    const res = await request(app.getHttpServer()).get('/health/payments').expect(200);
+    expect(res.body).toEqual({
+      status: 'ok',
+      webhooksAwaitingProcessing: 0,
+      oldestUnprocessedWebhookAgeSeconds: 0,
+      paymentWebhooksWaiting: 0,
+      paymentWebhooksFailed: 0,
+      expirySweepFailed: 0,
+      attemptsPendingPastExpiry: 0,
+    });
+  });
 });

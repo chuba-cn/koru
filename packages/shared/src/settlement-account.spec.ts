@@ -4,7 +4,7 @@ import { CreateSettlementAccountSchema } from './settlement-account.js';
 const valid = {
   label: 'General Offering',
   accountNumber: '0123456789',
-  bankName: 'Wema Bank',
+  bankCode: '035',
 };
 
 describe('CreateSettlementAccountSchema', () => {

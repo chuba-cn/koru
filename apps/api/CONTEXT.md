@@ -24,7 +24,22 @@ _Avoid_: using this word for a Pledge being fully paid (that is Fulfilment)
 **Pay-with-Transfer**:
 The payment flow where Paystack issues a one-time virtual account number for a single Payment;
 the Member transfers to it and a Webhook Event confirms receipt.
-_Avoid_: Virtual account (that names the mechanism, not the flow)
+_Avoid_: Virtual account (that names the mechanism, not the flow); Dedicated Virtual Account (a
+distinct, permanent, per-customer Paystack product KORU does not use — ADR-0002)
+
+**Payment Gateway**:
+The port every call to a payment provider goes through — Paystack today, and any future provider
+behind the same interface without the rest of the codebase knowing which one. `PaystackAdapter` is
+its only implementation.
+_Avoid_: Provider, Processor (Payment Gateway is specifically the interface; the concrete provider
+is an Adapter)
+
+**Charge Facts**:
+The confirmed, fetched record of what actually happened to a charge — the only source a Ledger
+posting is allowed to read amounts from. A Webhook Event is a trigger to go fetch Charge Facts, not
+a source of truth on its own.
+_Avoid_: Webhook payload, Transaction data (Charge Facts is specifically the fetched, normalized
+shape — never the raw provider response)
 
 **Reconciliation**:
 Automatically matching an incoming Payment to its Member, Campaign, and Pledge from webhook

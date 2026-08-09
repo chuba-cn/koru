@@ -2,9 +2,55 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { PAYMENT_GATEWAY } from '../src/payments/gateway/payment-gateway';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createAuthedChurch } from './auth-utils';
 import { truncateAll } from './db-utils';
+
+const FAKE_BANKS = [
+  { name: 'GTBank', slug: 'gtbank', code: '058', currency: 'NGN', active: true },
+  { name: 'Zenith Bank', slug: 'zenith-bank', code: '057', currency: 'NGN', active: true },
+];
+
+let subaccountCounter = 0;
+
+function fakeGateway() {
+  return {
+    provider: 'paystack' as const,
+    capabilities: {
+      transferCharge: true,
+      webhookEventIds: false,
+      settlementReporting: true,
+      refunds: true,
+      disputes: true,
+      subaccounts: true,
+      bankDirectory: true,
+    },
+    createTransferCharge: async () => {
+      throw new Error('not used by this suite');
+    },
+    verifySignature: () => false,
+    parseWebhook: () => {
+      throw new Error('not used by this suite');
+    },
+    fetchCharge: async () => {
+      throw new Error('not used by this suite');
+    },
+    listBanks: async () => FAKE_BANKS,
+    resolveAccountNumber: async (input: { accountNumber: string; bankCode: string }) => {
+      const bank = FAKE_BANKS.find((b) => b.code === input.bankCode);
+      if (!bank) throw new Error('unresolvable in this fake');
+      return { accountNumber: input.accountNumber, accountName: 'Test Account Holder' };
+    },
+    createSubaccount: async (input: { accountNumber: string }) => ({
+      provider: 'paystack' as const,
+      subaccountCode: `ACCT_fake_${++subaccountCounter}`,
+      accountNumberMasked: `${'*'.repeat(input.accountNumber.length - 4)}${input.accountNumber.slice(-4)}`,
+      bankCode: '058',
+      isVerified: false,
+    }),
+  };
+}
 
 async function createBranch(
   app: INestApplication,
@@ -23,9 +69,14 @@ async function createBranch(
 describe('Settlement accounts (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let gateway: ReturnType<typeof fakeGateway>;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    gateway = fakeGateway();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(PAYMENT_GATEWAY)
+      .useValue(gateway)
+      .compile();
     app = moduleRef.createNestApplication();
     await app.init();
     prisma = app.get(PrismaService);
@@ -39,20 +90,64 @@ describe('Settlement accounts (e2e)', () => {
     await app.close();
   });
 
-  it('records a church-wide account and masks the number', async () => {
+  it('records a church-wide account, deriving bankName and accountName from the provider', async () => {
     const { cookie, churchId } = await createAuthedChurch(app);
 
     const res = await request(app.getHttpServer())
       .post(`/churches/${churchId}/settlement-accounts`)
       .set('Cookie', cookie)
-      .send({ label: 'General Offering', accountNumber: '0123456789', bankName: 'Wema Bank' })
+      .send({ label: 'General Offering', accountNumber: '0123456789', bankCode: '058' })
       .expect(201);
 
     expect(res.body.label).toBe('General Offering');
     expect(res.body.branchId).toBeNull();
+    expect(res.body.bankName).toBe('GTBank');
+    expect(res.body.accountName).toBe('Test Account Holder');
     expect(res.body.accountNumberMasked).toBe('******6789');
     expect(JSON.stringify(res.body)).not.toContain('0123456789');
-    expect(res.body.paystackSubaccountCode).toBeUndefined();
+    expect(res.body.providerSubaccountCode).toBeUndefined();
+    expect(Object.keys(res.body)).not.toContain('accountNumberHash');
+
+    const row = await prisma.settlementAccount.findFirstOrThrow();
+    expect(row.providerSubaccountCode).toMatch(/^ACCT_fake_/);
+  });
+
+  it('409s the second registration of the same bank account, naming the existing one', async () => {
+    const { cookie, churchId } = await createAuthedChurch(app);
+    const body = { accountNumber: '0123456789', bankCode: '058' };
+
+    await request(app.getHttpServer())
+      .post(`/churches/${churchId}/settlement-accounts`)
+      .set('Cookie', cookie)
+      .send({ ...body, label: 'Building Fund' })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .post(`/churches/${churchId}/settlement-accounts`)
+      .set('Cookie', cookie)
+      .send({ ...body, label: 'Building Fund 2026' })
+      .expect(409);
+
+    expect(res.body.message).toContain('Building Fund');
+    expect(await prisma.settlementAccount.count({ where: { churchId } })).toBe(1);
+  });
+
+  it('allows the same bank account to be registered by a different church', async () => {
+    const first = await createAuthedChurch(app);
+    const second = await createAuthedChurch(app);
+    const body = { label: 'Main', accountNumber: '0123456789', bankCode: '058' };
+
+    await request(app.getHttpServer())
+      .post(`/churches/${first.churchId}/settlement-accounts`)
+      .set('Cookie', first.cookie)
+      .send(body)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/churches/${second.churchId}/settlement-accounts`)
+      .set('Cookie', second.cookie)
+      .send(body)
+      .expect(201);
   });
 
   it('never persists the full account number (only the mask reaches the DB)', async () => {
@@ -61,12 +156,25 @@ describe('Settlement accounts (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/churches/${churchId}/settlement-accounts`)
       .set('Cookie', cookie)
-      .send({ label: 'Rent', accountNumber: '9988776655', bankName: 'GTBank' })
+      .send({ label: 'Rent', accountNumber: '9988776655', bankCode: '058' })
       .expect(201);
 
     const row = await prisma.settlementAccount.findFirstOrThrow();
     expect(row.accountNumberMasked).toBe('******6655');
     expect(JSON.stringify(row)).not.toContain('9988776655');
+  });
+
+  it('rejects an unknown bankCode before ever calling resolve or create', async () => {
+    const { cookie, churchId } = await createAuthedChurch(app);
+
+    const res = await request(app.getHttpServer())
+      .post(`/churches/${churchId}/settlement-accounts`)
+      .set('Cookie', cookie)
+      .send({ label: 'Bad bank', accountNumber: '0123456789', bankCode: '999999' })
+      .expect(400);
+
+    expect(res.body.error).toBe('BAD_REQUEST');
+    expect(await prisma.settlementAccount.count()).toBe(0);
   });
 
   it('records a branch-level account', async () => {
@@ -79,7 +187,7 @@ describe('Settlement accounts (e2e)', () => {
       .send({
         label: 'KORU Abuja Rent',
         accountNumber: '0123456789',
-        bankName: 'Wema Bank',
+        bankCode: '058',
         branchId: branch.id,
       })
       .expect(201);
@@ -98,7 +206,7 @@ describe('Settlement accounts (e2e)', () => {
       .send({
         label: 'Cross-church',
         accountNumber: '0123456789',
-        bankName: 'Wema',
+        bankCode: '058',
         branchId: branchB.id,
       })
       .expect(400);
@@ -113,7 +221,7 @@ describe('Settlement accounts (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post(`/churches/${churchId}/settlement-accounts`)
       .set('Cookie', cookie)
-      .send({ label: 'Short', accountNumber: '123', bankName: 'Wema' })
+      .send({ label: 'Short', accountNumber: '123', bankCode: '058' })
       .expect(400);
 
     expect(res.body.errors.accountNumber).toBeDefined();
@@ -126,7 +234,7 @@ describe('Settlement accounts (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/churches/${churchId}/settlement-accounts`)
       .set('Cookie', cookie)
-      .send({ label: 'General', accountNumber: '0123456789', bankName: 'Wema' })
+      .send({ label: 'General', accountNumber: '0123456789', bankCode: '058' })
       .expect(201);
 
     await request(app.getHttpServer())
@@ -135,7 +243,7 @@ describe('Settlement accounts (e2e)', () => {
       .send({
         label: 'Branch Rent',
         accountNumber: '1112223334',
-        bankName: 'GTB',
+        bankCode: '057',
         branchId: branch.id,
       })
       .expect(201);
@@ -163,7 +271,7 @@ describe('Settlement accounts (e2e)', () => {
     const acct = await request(app.getHttpServer())
       .post(`/churches/${churchId}/settlement-accounts`)
       .set('Cookie', cookie)
-      .send({ label: 'General', accountNumber: '0123456789', bankName: 'Wema' })
+      .send({ label: 'General', accountNumber: '0123456789', bankCode: '058' })
       .expect(201);
 
     const updated = await request(app.getHttpServer())
@@ -183,7 +291,7 @@ describe('Settlement accounts (e2e)', () => {
     const acct = await request(app.getHttpServer())
       .post(`/churches/${alice.churchId}/settlement-accounts`)
       .set('Cookie', alice.cookie)
-      .send({ label: 'General', accountNumber: '0123456789', bankName: 'Wema' })
+      .send({ label: 'General', accountNumber: '0123456789', bankCode: '058' })
       .expect(201);
 
     const list = await request(app.getHttpServer())
@@ -208,7 +316,7 @@ describe('Settlement accounts (e2e)', () => {
     const churchWide = await request(app.getHttpServer())
       .post(`/churches/${alice.churchId}/settlement-accounts`)
       .set('Cookie', alice.cookie)
-      .send({ label: 'Church Main', accountNumber: '0000000001', bankName: 'GTB' })
+      .send({ label: 'Church Main', accountNumber: '0000000001', bankCode: '058' })
       .expect(201);
     const ownAccount = await request(app.getHttpServer())
       .post(`/churches/${alice.churchId}/settlement-accounts`)
@@ -216,7 +324,7 @@ describe('Settlement accounts (e2e)', () => {
       .send({
         label: 'Own Account',
         accountNumber: '0000000002',
-        bankName: 'GTB',
+        bankCode: '058',
         branchId: ownBranch.id,
       })
       .expect(201);
@@ -226,7 +334,7 @@ describe('Settlement accounts (e2e)', () => {
       .send({
         label: 'Other Account',
         accountNumber: '0000000003',
-        bankName: 'GTB',
+        bankCode: '058',
         branchId: otherBranch.id,
       })
       .expect(201);
@@ -250,7 +358,7 @@ describe('Settlement accounts (e2e)', () => {
     expect(ids).not.toContain(otherAccount.body.id);
 
     for (const account of list.body.items) {
-      expect(account.paystackSubaccountCode).toBeUndefined();
+      expect(account.providerSubaccountCode).toBeUndefined();
     }
 
     await request(app.getHttpServer())
@@ -262,7 +370,7 @@ describe('Settlement accounts (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/churches/${alice.churchId}/settlement-accounts`)
       .set('Cookie', alice.cookie)
-      .send({ label: 'Sneaky', accountNumber: '0000000004', bankName: 'GTB' })
+      .send({ label: 'Sneaky', accountNumber: '0000000004', bankCode: '058' })
       .expect(403);
 
     await request(app.getHttpServer())
@@ -270,5 +378,34 @@ describe('Settlement accounts (e2e)', () => {
       .set('Cookie', alice.cookie)
       .send({ label: 'Renamed' })
       .expect(403);
+  });
+});
+
+describe('Bank directory (e2e)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(PAYMENT_GATEWAY)
+      .useValue(fakeGateway())
+      .compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('returns the bank directory to an authenticated session', async () => {
+    const { cookie } = await createAuthedChurch(app);
+
+    const res = await request(app.getHttpServer()).get('/banks').set('Cookie', cookie).expect(200);
+
+    expect(res.body).toEqual(FAKE_BANKS);
+  });
+
+  it('401s without a session', async () => {
+    await request(app.getHttpServer()).get('/banks').expect(401);
   });
 });

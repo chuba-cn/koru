@@ -6,7 +6,7 @@ const NubanSchema = z.string().regex(/^\d{10}$/, 'account number must be exactly
 export const CreateSettlementAccountSchema = z.object({
   label: z.string().min(2).max(120),
   accountNumber: NubanSchema,
-  bankName: z.string().min(2).max(120),
+  bankCode: z.string().min(1).max(20),
   branchId: z.uuid().optional(),
 });
 
@@ -24,7 +24,9 @@ export const SettlementAccountSchema = z.object({
   branchId: z.uuid().nullable(),
   label: z.string(),
   bankName: z.string().nullable(),
+  bankCode: z.string().nullable(),
   accountNumberMasked: z.string().nullable(),
+  accountName: z.string().nullable(),
   createdAt: z.iso.datetime(),
 });
 

@@ -11,11 +11,13 @@ import {
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiServiceUnavailableResponse,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
@@ -51,7 +53,17 @@ export class SettlementAccountController {
   @ApiCreatedResponse({ type: SettlementAccountDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
   @ApiBadRequestResponse({
-    description: 'Validation failed, malformed UUID, or branchId not in this church',
+    description:
+      'Validation failed, malformed UUID, branchId not in this church, an unknown bank code, ' +
+      'or an account number the bank could not resolve',
+    type: ErrorResponseDto,
+  })
+  @ApiConflictResponse({
+    description: 'That bank account is already registered for this church',
+    type: ErrorResponseDto,
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'The payment gateway could not be reached, or failed to register the subaccount',
     type: ErrorResponseDto,
   })
   create(

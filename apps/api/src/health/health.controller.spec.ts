@@ -26,6 +26,8 @@ describe('HealthController.checkRedis', () => {
       emailQueue as never,
       {} as never,
       {} as never,
+      {} as never,
+      {} as never,
     );
 
     await expect(controller.checkRedis()).resolves.toEqual({ status: 'ok', redis: 'reachable' });
@@ -38,6 +40,8 @@ describe('HealthController.checkRedis', () => {
     const controller = new HealthController(
       {} as never,
       emailQueue as never,
+      {} as never,
+      {} as never,
       {} as never,
       {} as never,
     );
@@ -66,6 +70,8 @@ describe('HealthController.checkOutbox', () => {
       {} as never,
       domainEventsQueue as never,
       relayQueue as never,
+      {} as never,
+      {} as never,
     );
 
     await expect(controller.checkOutbox()).resolves.toEqual({
@@ -95,6 +101,8 @@ describe('HealthController.checkOutbox', () => {
       {} as never,
       domainEventsQueue as never,
       relayQueue as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.checkOutbox();
@@ -104,5 +112,71 @@ describe('HealthController.checkOutbox', () => {
     expect(result.domainEventsWaiting).toBe(2);
     expect(result.domainEventsFailed).toBe(1);
     expect(result.relayFailed).toBe(4);
+  });
+});
+
+describe('HealthController.checkPayments', () => {
+  it('reports zero backlog when nothing is stuck', async () => {
+    const prisma = {
+      webhookEvent: {
+        count: vi.fn().mockResolvedValue(0),
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      paymentAttempt: { count: vi.fn().mockResolvedValue(0) },
+    };
+    const paymentWebhooksQueue = {
+      getJobCounts: vi.fn().mockResolvedValue({ waiting: 0, failed: 0 }),
+    };
+    const paymentExpiryQueue = { getJobCounts: vi.fn().mockResolvedValue({ failed: 0 }) };
+    const controller = new HealthController(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      paymentWebhooksQueue as never,
+      paymentExpiryQueue as never,
+    );
+
+    await expect(controller.checkPayments()).resolves.toEqual({
+      status: 'ok',
+      webhooksAwaitingProcessing: 0,
+      oldestUnprocessedWebhookAgeSeconds: 0,
+      paymentWebhooksWaiting: 0,
+      paymentWebhooksFailed: 0,
+      expirySweepFailed: 0,
+      attemptsPendingPastExpiry: 0,
+    });
+  });
+
+  it('reports the age of the oldest unprocessed webhook and the past-expiry backlog', async () => {
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const prisma = {
+      webhookEvent: {
+        count: vi.fn().mockResolvedValue(2),
+        findFirst: vi.fn().mockResolvedValue({ receivedAt: tenMinutesAgo }),
+      },
+      paymentAttempt: { count: vi.fn().mockResolvedValue(5) },
+    };
+    const paymentWebhooksQueue = {
+      getJobCounts: vi.fn().mockResolvedValue({ waiting: 1, failed: 3 }),
+    };
+    const paymentExpiryQueue = { getJobCounts: vi.fn().mockResolvedValue({ failed: 1 }) };
+    const controller = new HealthController(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      paymentWebhooksQueue as never,
+      paymentExpiryQueue as never,
+    );
+
+    const result = await controller.checkPayments();
+
+    expect(result.webhooksAwaitingProcessing).toBe(2);
+    expect(result.oldestUnprocessedWebhookAgeSeconds).toBeGreaterThanOrEqual(595);
+    expect(result.paymentWebhooksWaiting).toBe(1);
+    expect(result.paymentWebhooksFailed).toBe(3);
+    expect(result.expirySweepFailed).toBe(1);
+    expect(result.attemptsPendingPastExpiry).toBe(5);
   });
 });

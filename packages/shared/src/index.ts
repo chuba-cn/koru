@@ -35,6 +35,7 @@ export * from './mask.js';
 export * from './member.js';
 export * from './onboarding.js';
 export * from './pagination.js';
+export * from './payments.js';
 export * from './region.js';
 export * from './resend-webhook.js';
 export * from './schemas.js';

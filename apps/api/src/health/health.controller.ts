@@ -15,6 +15,8 @@ export class HealthController {
     @InjectQueue('email') private readonly emailQueue: Queue,
     @InjectQueue('domain-events') private readonly domainEventsQueue: Queue,
     @InjectQueue('outbox-relay') private readonly relayQueue: Queue,
+    @InjectQueue('payment-webhooks') private readonly paymentWebhooksQueue: Queue,
+    @InjectQueue('payment-expiry') private readonly paymentExpiryQueue: Queue,
   ) {}
 
   @Get()
@@ -69,6 +71,41 @@ export class HealthController {
       domainEventsWaiting: domainEventsCounts.waiting ?? 0,
       domainEventsFailed: domainEventsCounts.failed ?? 0,
       relayFailed: relayCounts.failed ?? 0,
+    };
+  }
+
+  @Get('payments')
+  async checkPayments() {
+    const [
+      webhooksAwaitingProcessing,
+      oldestUnprocessed,
+      attemptsPendingPastExpiry,
+      webhooksCounts,
+      expiryCounts,
+    ] = await Promise.all([
+      this.prisma.webhookEvent.count({ where: { status: 'received' } }),
+      this.prisma.webhookEvent.findFirst({
+        where: { status: 'received' },
+        orderBy: { receivedAt: 'asc' },
+        select: { receivedAt: true },
+      }),
+      this.prisma.paymentAttempt.count({
+        where: { status: 'pending', expiresAt: { lt: new Date() } },
+      }),
+      this.paymentWebhooksQueue.getJobCounts('waiting', 'failed'),
+      this.paymentExpiryQueue.getJobCounts('failed'),
+    ]);
+
+    return {
+      status: 'ok',
+      webhooksAwaitingProcessing,
+      oldestUnprocessedWebhookAgeSeconds: oldestUnprocessed
+        ? Math.floor((Date.now() - oldestUnprocessed.receivedAt.getTime()) / 1_000)
+        : 0,
+      paymentWebhooksWaiting: webhooksCounts.waiting ?? 0,
+      paymentWebhooksFailed: webhooksCounts.failed ?? 0,
+      expirySweepFailed: expiryCounts.failed ?? 0,
+      attemptsPendingPastExpiry,
     };
   }
 

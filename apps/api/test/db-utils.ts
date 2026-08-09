@@ -33,7 +33,7 @@ async function resetQueue(queue: Queue, drainTimeoutMs: number) {
 export async function truncateAll(app: INestApplication) {
   const prisma = app.get(PrismaService);
   await Promise.all(
-    ['email', 'outbox-relay', 'domain-events'].map((name) =>
+    ['email', 'outbox-relay', 'domain-events', 'payment-webhooks', 'payment-expiry'].map((name) =>
       resetQueue(app.get<Queue>(getQueueToken(name)), QUEUE_DRAIN_TIMEOUT_MS),
     ),
   );

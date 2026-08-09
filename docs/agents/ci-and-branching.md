@@ -21,6 +21,45 @@ How work gets from a ticket onto `main` in this repo. Applies to humans and agen
 5. **CI must be green.** `verify` and `e2e` are required; `main` will not accept the PR otherwise.
 6. **Squash-merge.** The branch is deleted automatically.
 
+For an epic with several dependent tickets, don't run that loop once per ticket and wait for each merge. Stack them — see below.
+
+## Stacked PRs, for an epic with dependent tickets
+
+The loop above assumes one ticket at a time: open a PR, wait, merge, branch again. That serialises work that isn't actually serial. When ticket B only needs ticket A's schema (not A's review outcome), waiting for A to merge is dead time.
+
+A stack is a chain of branches where each PR targets the one below it instead of `main`. A is reviewed against `main`; B is reviewed against A, so B's diff shows only B's work.
+
+Requires the `gh-stack` extension, once per machine:
+
+```bash
+gh extension install github/gh-stack
+```
+
+The loop:
+
+```bash
+gh stack init --base main       # start the stack on the current branch
+gh stack add feat/108-slug      # next ticket, branched on top of the previous
+gh stack submit                 # push everything, create/update every PR
+gh stack view                   # see the chain and its PR links
+gh stack sync                   # after main moves, or after a lower PR changes
+gh stack merge --yes --squash   # merge the whole chain
+```
+
+Every PR still needs its own `Closes #<n>`. `gh stack submit` opens an editor per PR for exactly that; don't `--auto` past it, for the same reason step 4 above rejects `gh pr create --fill`.
+
+### Decisions, and what was actually verified
+
+**Each PR keeps its own commit on `main`.** This was the one thing that had to be true before adopting this, because `main` is a one-commit-per-ticket ledger and a stack that collapsed into a single commit would destroy that. GitHub's docs are explicit: *"The resulting commit history is the same as merging each pull request individually, starting from the bottom."* Merging a four-PR stack with `--squash` produces four commits, in order. `gh stack merge`'s own help calls it an "atomic stack merge", which describes all-or-nothing **failure** semantics, not commit count: "if any PR cannot be merged, none are."
+
+**Prefer merging the whole stack over merging part of it.** `gh stack merge <pr-number>` can land just the bottom few, and sometimes that's right. But `strict_required_status_checks_policy` is on in the `main` ruleset, so a PR must be up to date with its base to merge. Partial-merge retargets everything above onto the new `main`, which makes those PRs stale and forces a `gh stack sync` plus a full CI re-run on each. Merging the whole chain in one operation avoids that entirely.
+
+**Unverified, and worth watching on the first real stack:** how strict status checks behave *during* an atomic full-stack merge. The reasoning says it's fine, because the whole chain lands in one operation with no intermediate state where an upper PR is stale against a moved `main`. GitHub's docs do not say so explicitly, and I could not find a primary source either way, so treat the first stacked epic as the experiment and record the answer here.
+
+**`main` moving under you still costs a rebuild.** That's inherent to strict checks, not to stacking: any base advance invalidates the green on every open PR. `gh stack sync` rebases the whole chain and re-pushes in one command, which is strictly better than doing it per branch by hand. A merge queue would remove the cost entirely, and is the thing to reach for if this ever becomes painful.
+
+**Limits that apply here:** every branch in a stack must live in this repo (cross-fork stacks are unsupported), and GitHub Desktop can't drive them. Neither constrains this project.
+
 ## What CI runs
 
 One workflow, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), on every PR and every push to `main`. Two jobs, in parallel:
@@ -49,7 +88,7 @@ pnpm --filter @koru/api test:e2e
 
 **CI is the merge gate; there is no required reviewer.** GitHub won't let you approve your own PR, so requiring an approval would deadlock `main` for a solo developer. Code review happens locally via the `code-reviewer` subagent, enforced by [`.claude/hooks/review-gate.sh`](../../.claude/hooks/review-gate.sh). Raise `required_approving_review_count` the day a second human joins.
 
-**`strict_required_status_checks_policy` is on.** A PR must be up to date with `main` before merging. This is what makes squash safe — it stops a PR merging green against a stale `main`. Nearly free for one developer; it's what catches semantic conflicts once two agents work in parallel.
+**`strict_required_status_checks_policy` is on.** A PR must be up to date with `main` before merging. This is what makes squash safe — it stops a PR merging green against a stale `main`. Nearly free for one developer; it's what catches semantic conflicts once two agents work in parallel. It's configured in the **`main` ruleset**, not classic branch protection, so `gh api repos/koru-app/koru/branches/main/protection` returns "Branch not protected" — that 404 is expected and means nothing. Read `gh api repos/koru-app/koru/rulesets` instead.
 
 **Test credentials live in `ci.yml` in plain sight, not in repo secrets.** A repo secret is for a credential that protects a *real asset*. The CI `BETTER_AUTH_SECRET` signs sessions in a container destroyed minutes later; the Google values are placeholders the suite never sends to Google. Using secrets would make CI unreproducible for contributors, mask the very connection strings you need to debug a CI-only failure, and silently break for fork PRs. Real Paystack keys or a staging `DATABASE_URL` **are** secrets.
 

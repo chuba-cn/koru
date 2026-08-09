@@ -67,6 +67,10 @@ enum PaymentChannel {
   imported
 }
 
+enum PaymentProvider {
+  paystack
+}
+
 enum EmailCategory {
   staff_invite
   staff_removed
@@ -295,15 +299,21 @@ model SettlementAccount {
   churchId               String
   branchId               String?
   label                  String
-  paystackSubaccountCode String?
+  providerSubaccountCode String?  @unique
   bankName               String?
+  bankCode               String?
+  accountNumberHash      String?
   accountNumberMasked    String?
+  accountName            String?
   createdAt              DateTime @default(now())
 
-  church    Church     @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  branch    Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  campaigns Campaign[]
+  church          Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  branch          Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  campaigns       Campaign[]
+  paymentAttempts PaymentAttempt[]
 
+  @@unique([churchId, id])
+  @@unique([churchId, bankCode, accountNumberHash])
   @@index([churchId, label, id])
   @@index([branchId])
 }
@@ -328,7 +338,7 @@ model Campaign {
   createdAt   DateTime @default(now())
 
   church            Church            @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  settlementAccount SettlementAccount @relation(fields: [settlementAccountId], references: [id])
+  settlementAccount SettlementAccount @relation(fields: [settlementAccountId, churchId], references: [id, churchId])
   createdBy         Staff?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   donationIntents DonationIntent[]
@@ -375,14 +385,14 @@ model DonationIntent {
   church   Church           @relation(fields: [churchId], references: [id], onDelete: Cascade)
   branch   Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
   // Restrict, not Cascade: deleting a Campaign must never take real giving
-  // history with it. Per ADR-0016, that history stays visible and provable —
+  // history with it. Per ADR-0016, that history stays visible and provable:
   // a Campaign with intents against it isn't deletable at all.
   campaign Campaign         @relation(fields: [campaignId], references: [id], onDelete: Restrict)
   member   Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
   pledge   Pledge?          @relation(fields: [pledgeId], references: [id], onDelete: SetNull)
   attempts PaymentAttempt[]
 
-  @@unique([churchId, idempotencyKey])
+  @@unique([churchId, memberId, idempotencyKey])
   @@index([churchId, status])
   @@index([campaignId])
   @@index([memberId])
@@ -393,51 +403,58 @@ model PaymentAttempt {
   churchId             String
   branchId             String?
   donationIntentId     String
+  settlementAccountId  String?
   channel              PaymentChannel
+  provider             PaymentProvider?
   status               PaymentAttemptStatus @default(pending)
   providerReference    String?              @unique
   virtualAccountNumber String?
   virtualAccountBank   String?
+  virtualAccountName   String?
   amountKobo           BigInt
   expiresAt            DateTime?
+  failureReason        String?
   cashApprovalStatus   CashApprovalStatus?
   cashApprovedById     String?
   recordedById         String?
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
 
-  church         Church         @relation(fields: [churchId], references: [id], onDelete: Cascade)
-  branch         Branch?        @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  donationIntent DonationIntent @relation(fields: [donationIntentId], references: [id], onDelete: Cascade)
-  cashApprovedBy Staff?         @relation("PaymentAttemptCashApprovals", fields: [cashApprovedById], references: [id], onDelete: SetNull)
-  recordedBy     Staff?         @relation("PaymentAttemptsRecorded", fields: [recordedById], references: [id], onDelete: SetNull)
-  payment        Payment?
+  church            Church             @relation(fields: [churchId], references: [id], onDelete: Cascade)
+  branch            Branch?            @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  donationIntent    DonationIntent     @relation(fields: [donationIntentId], references: [id], onDelete: Cascade)
+  settlementAccount SettlementAccount? @relation(fields: [settlementAccountId, churchId], references: [id, churchId], onDelete: Restrict)
+  cashApprovedBy    Staff?             @relation("PaymentAttemptCashApprovals", fields: [cashApprovedById], references: [id], onDelete: SetNull)
+  recordedBy        Staff?             @relation("PaymentAttemptsRecorded", fields: [recordedById], references: [id], onDelete: SetNull)
+  payment           Payment?
 
   @@index([churchId, status, createdAt])
   @@index([donationIntentId])
+  @@index([status, expiresAt])
 }
 
 model Payment {
-  id                   String         @id @default(uuid())
+  id                   String           @id @default(uuid())
   churchId             String
   branchId             String?
   campaignId           String
   memberId             String?
   pledgeId             String?
-  paymentAttemptId     String?        @unique
+  paymentAttemptId     String?          @unique
   amountKobo           BigInt
   channel              PaymentChannel
-  state                PaymentState   @default(settled)
-  paystackReference    String?        @unique
+  provider             PaymentProvider?
+  state                PaymentState     @default(settled)
+  providerReference    String?          @unique
   virtualAccountNumber String?
   virtualAccountBank   String?
   recordedById         String?
   paidAt               DateTime
-  createdAt            DateTime       @default(now())
+  createdAt            DateTime         @default(now())
 
   church         Church          @relation(fields: [churchId], references: [id], onDelete: Cascade)
   branch         Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  // Restrict, not Cascade: a settled Payment is immutable per ADR-0016 — its
+  // Restrict, not Cascade: a settled Payment is immutable per ADR-0016. Its
   // Campaign can never be deleted out from under it.
   campaign       Campaign        @relation(fields: [campaignId], references: [id], onDelete: Restrict)
   member         Member?         @relation(fields: [memberId], references: [id], onDelete: SetNull)
@@ -465,16 +482,17 @@ model LedgerTransaction {
 }
 
 model LedgerEntry {
-  id            String          @id @default(uuid())
+  id            String           @id @default(uuid())
   transactionId String
   churchId      String
   branchId      String?
   campaignId    String?
   account       LedgerAccount
+  provider      PaymentProvider?
   entryType     LedgerEntryType
   amountKobo    BigInt
   dedupeKey     String
-  createdAt     DateTime        @default(now())
+  createdAt     DateTime         @default(now())
 
   transaction LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   church      Church            @relation(fields: [churchId], references: [id], onDelete: Cascade)
@@ -484,6 +502,7 @@ model LedgerEntry {
   @@unique([churchId, dedupeKey])
   @@index([churchId, createdAt])
   @@index([campaignId, entryType])
+  @@index([churchId, account, provider, createdAt])
 }
 
 model DomainEvent {
@@ -518,8 +537,8 @@ model RefundRequest {
   payment     Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   // SetNull, not Restrict: a Staff member who ever requested a refund must
   // still be removable (StaffService.remove hard-deletes). Who requested it
-  // is preserved in AuditLog, which is the durable record for this fact —
-  // this FK is a convenience join, not the fact's only home.
+  // is preserved in AuditLog, which is the durable record for this fact.
+  // This FK is a convenience join, not the fact's only home.
   requestedBy Staff?  @relation("RefundsRequested", fields: [requestedById], references: [id], onDelete: SetNull)
   approvedBy  Staff?  @relation("RefundsApproved", fields: [approvedById], references: [id], onDelete: SetNull)
 
@@ -664,17 +683,20 @@ model Verification {
 }
 
 model WebhookEvent {
-  id              String        @id @default(uuid())
-  paystackEventId String        @unique
-  type            String
-  payload         Json
-  churchId        String?
-  signature       String
-  rawBody         String
-  status          WebhookStatus @default(received)
-  receivedAt      DateTime      @default(now())
-  processedAt     DateTime?
-  createdAt       DateTime      @default(now())
+  id               String          @id @default(uuid())
+  provider         PaymentProvider
+  providerEventKey String          @unique
+  type             String
+  payload          Json
+  churchId         String?
+  signature        String
+  rawBody          String
+  status           WebhookStatus   @default(received)
+  receivedAt       DateTime        @default(now())
+  processedAt      DateTime?
+  createdAt        DateTime        @default(now())
 
+  @@unique([provider, providerEventKey])
   @@index([churchId])
+  @@index([status, receivedAt])
 }

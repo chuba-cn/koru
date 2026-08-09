@@ -24,6 +24,9 @@ export default defineConfig({
       SUPPORT_PHONE: '+234 000 000 0000',
       LOGO_URL: 'https://example.test/logo.png',
       RESEND_WEBHOOK_SECRET: 'unit-test-value-never-verifies-anything-real',
+      PAYSTACK_SECRET_KEY: 'unit-test-value-never-calls-paystack',
+      PAYSTACK_PLACEHOLDER_EMAIL_DOMAIN: 'giving.koru.ng',
+      SETTLEMENT_ACCOUNT_HASH_PEPPER: 'unit-test-pepper-never-hashes-anything-real',
     },
   },
   plugins: [
