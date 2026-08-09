@@ -13,7 +13,9 @@ function restore(original: string | undefined) {
 describe('isPaymentSweepScheduleEnabled', () => {
   const original = process.env.PAYMENT_SWEEP_SCHEDULE_ENABLED;
 
-  afterEach(() => restore(original));
+  afterEach(() => {
+    restore(original);
+  });
 
   it('is true by default — production must actually schedule the sweep', () => {
     delete process.env.PAYMENT_SWEEP_SCHEDULE_ENABLED;
@@ -29,7 +31,9 @@ describe('isPaymentSweepScheduleEnabled', () => {
 describe('PaymentsModule.onModuleInit', () => {
   const original = process.env.PAYMENT_SWEEP_SCHEDULE_ENABLED;
 
-  afterEach(() => restore(original));
+  afterEach(() => {
+    restore(original);
+  });
 
   it('registers the expiry sweep schedule when enabled', async () => {
     delete process.env.PAYMENT_SWEEP_SCHEDULE_ENABLED;

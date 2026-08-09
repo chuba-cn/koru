@@ -53,29 +53,31 @@ export class DonationIntentService {
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
+  private async resolveMemberId(userId: string, churchId: string) {
+    const member = await this.prisma.member.findFirst({
+      where: { userId, churchId },
+      select: { id: true },
+    });
+    if (!member) throw new NotFoundException('You are not a member of this church');
+
+    return member.id;
+  }
+
   async createForUser(
     userId: string,
     churchId: string,
     input: Omit<CreateIntentInput, 'churchId' | 'memberId'>,
   ): Promise<CreateIntentResult> {
-    const member = await this.prisma.member.findFirst({
-      where: { userId, churchId },
-      select: { id: true },
-    });
-    if (!member) throw new NotFoundException('You are not a member of this church');
+    const memberId = await this.resolveMemberId(userId, churchId);
 
-    return this.createIntentWithTransferAttempt({ ...input, churchId, memberId: member.id });
+    return this.createIntentWithTransferAttempt({ ...input, churchId, memberId });
   }
 
   async findForUser(userId: string, churchId: string, donationId: string) {
-    const member = await this.prisma.member.findFirst({
-      where: { userId, churchId },
-      select: { id: true },
-    });
-    if (!member) throw new NotFoundException('You are not a member of this church');
+    const memberId = await this.resolveMemberId(userId, churchId);
 
     const intent = await this.prisma.donationIntent.findFirst({
-      where: { id: donationId, churchId, memberId: member.id },
+      where: { id: donationId, churchId, memberId },
       include: { attempts: { orderBy: { createdAt: 'desc' }, take: 1 } },
     });
     if (!intent) throw new NotFoundException(`Donation ${donationId} not found`);

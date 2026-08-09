@@ -37,7 +37,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
       case 'charge_succeeded': {
         const facts = await this.gateway.fetchCharge(signal.reference);
         const result = await this.settlement.postCharge(facts);
-        resolvedChurchId = result?.churchId ?? null;
+        resolvedChurchId = result.churchId;
         break;
       }
       case 'transfer_rejected': {
@@ -45,7 +45,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
           signal.reference,
           signal.reason,
         );
-        resolvedChurchId = result?.churchId ?? null;
+        resolvedChurchId = result.churchId;
         break;
       }
       default:
