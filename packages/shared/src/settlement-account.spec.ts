@@ -5,19 +5,57 @@ const valid = {
   label: 'General Offering',
   accountNumber: '0123456789',
   bankCode: '035',
+  scopeType: 'church' as const,
 };
 
 describe('CreateSettlementAccountSchema', () => {
-  it('accepts a church-wide account', () => {
+  it('accepts a church-wide account, with no scopeRefId', () => {
     expect(CreateSettlementAccountSchema.safeParse(valid).success).toBe(true);
   });
 
-  it('accepts a branch-level account', () => {
+  it('rejects a church-wide account that carries a scopeRefId anyway', () => {
     const result = CreateSettlementAccountSchema.safeParse({
       ...valid,
-      branchId: '22222222-2222-4222-8222-222222222222',
+      scopeRefId: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a region-level account, with a scopeRefId', () => {
+    const result = CreateSettlementAccountSchema.safeParse({
+      ...valid,
+      scopeType: 'region',
+      scopeRefId: '22222222-2222-4222-8222-222222222222',
     });
     expect(result.success).toBe(true);
+  });
+
+  it('accepts a branch-level account, with a scopeRefId', () => {
+    const result = CreateSettlementAccountSchema.safeParse({
+      ...valid,
+      scopeType: 'branch',
+      scopeRefId: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a region-level account with no scopeRefId', () => {
+    const result = CreateSettlementAccountSchema.safeParse({ ...valid, scopeType: 'region' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a branch-level account with no scopeRefId', () => {
+    const result = CreateSettlementAccountSchema.safeParse({ ...valid, scopeType: 'branch' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a scopeRefId that is not a uuid', () => {
+    const result = CreateSettlementAccountSchema.safeParse({
+      ...valid,
+      scopeType: 'branch',
+      scopeRefId: 'nope',
+    });
+    expect(result.success).toBe(false);
   });
 
   /**
@@ -36,17 +74,14 @@ describe('CreateSettlementAccountSchema', () => {
     );
   });
 
-  it('names the offending field when the account number is wrong', () => {
+  it('names the offending field when the account number is wrong, on an otherwise-valid payload', () => {
     const result = CreateSettlementAccountSchema.safeParse({ ...valid, accountNumber: '123' });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0]?.path).toEqual(['accountNumber']);
-      expect(result.error.issues[0]?.message).toMatch(/exactly 10 digits/);
+      expect(result.error.issues.map((i) => i.path)).toContainEqual(['accountNumber']);
+      expect(result.error.issues.find((i) => i.path[0] === 'accountNumber')?.message).toMatch(
+        /exactly 10 digits/,
+      );
     }
-  });
-
-  it('rejects a branchId that is not a uuid', () => {
-    const result = CreateSettlementAccountSchema.safeParse({ ...valid, branchId: 'nope' });
-    expect(result.success).toBe(false);
   });
 });

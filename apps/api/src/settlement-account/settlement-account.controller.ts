@@ -39,23 +39,32 @@ import { SettlementAccountService } from './settlement-account.service';
 @ApiTags('settlement-accounts')
 @Controller('churches/:churchId/settlement-accounts')
 @UseGuards(TenantGuard, RolesGuard)
-@StaffRoles('super_admin')
+@StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
 @ApiUnauthorizedResponse({ description: 'No active session', type: ErrorResponseDto })
 @ApiForbiddenResponse({
-  description: 'Church does not belong to the session, or role is not super_admin',
+  description: 'Church does not belong to the session, or the role is not admin-tier',
   type: ErrorResponseDto,
 })
 export class SettlementAccountController {
   constructor(private readonly service: SettlementAccountService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Record a settlement account (church-wide or branch-level)' })
+  @ApiOperation({
+    summary: 'Register a settlement account at church, region or branch level',
+    description:
+      'A church-level account is super_admin only. A region-level account additionally admits regional_admin and finance; a branch-level account also admits branch_admin. Delegated roles must hold a scope that covers the target region or branch',
+  })
   @ApiCreatedResponse({ type: SettlementAccountDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
   @ApiBadRequestResponse({
     description:
-      'Validation failed, malformed UUID, branchId not in this church, an unknown bank code, ' +
-      'or an account number the bank could not resolve',
+      'Validation failed, malformed UUID, scopeRefId not a region/branch of this church, ' +
+      'an unknown bank code, or an account number the bank could not resolve',
+    type: ErrorResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description:
+      'Church does not belong to the session, the role may not register an account at this scope level, or the caller has no scope covering it',
     type: ErrorResponseDto,
   })
   @ApiConflictResponse({
@@ -68,28 +77,24 @@ export class SettlementAccountController {
   })
   create(
     @Param('churchId', ParseUUIDPipe) churchId: string,
+    @CallerStaff() caller: TenantStaff,
     @Body(new ZodValidationPipe(CreateSettlementAccountDto.schema))
     body: CreateSettlementAccountDto,
   ) {
-    return this.service.create(churchId, body);
+    return this.service.create(churchId, caller, body);
   }
 
   @Get()
-  @StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')
   @ApiOperation({
-    summary: 'List settlement accounts, optionally filtered by branch',
+    summary: 'List settlement accounts, optionally filtered by scope',
     description:
-      'Unlike the rest of this controller, readable by delegated roles: a regional_admin/branch_admin/finance caller sees the accounts of branches within their own scope, plus any church-wide account (branchId null). super_admin sees everyone. Cursor paginated, ordered by label (id as tiebreaker). Send the response "endCursor" value as "cursor" with "direction=forward" for Next, or the response "startCursor" value as "cursor" with "direction=backward" for previous',
+      'A super_admin sees every account. A regional_admin/branch_admin/finance caller sees the accounts of the regions and branches their own scope covers, the containing region of any branch they hold (read visibility only — they cannot create or relabel that region-level account), plus the church-wide account, which they may read but not create or relabel. Cursor paginated, ordered by label (id as tiebreaker). Send the response "endCursor" value as "cursor" with "direction=forward" for Next, or the response "startCursor" value as "cursor" with "direction=backward" for previous',
   })
   @ApiOkResponse({ type: SettlementAccountPageDto })
   @ApiNotFoundResponse({ description: 'Church not found', type: ErrorResponseDto })
   @ApiBadRequestResponse({
     description:
       'Malformed cursor/limit, cursor not found or not visible to the caller, or direction=backward with no cursor',
-    type: ErrorResponseDto,
-  })
-  @ApiForbiddenResponse({
-    description: 'Church does not belong to the session, or role cannot read settlement accounts',
     type: ErrorResponseDto,
   })
   list(
@@ -102,19 +107,29 @@ export class SettlementAccountController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update a settlement account label' })
+  @ApiOperation({
+    summary: 'Update a settlement account label',
+    description:
+      "Authorized against the account's own scope level, not the request body. The body cannot change an account's scope",
+  })
   @ApiOkResponse({ type: SettlementAccountDto })
   @ApiNotFoundResponse({ description: 'Church or account not found', type: ErrorResponseDto })
   @ApiBadRequestResponse({
     description: 'Validation failed or malformed UUID',
     type: ErrorResponseDto,
   })
+  @ApiForbiddenResponse({
+    description:
+      "Church does not belong to the session, or the caller may not act on this account's scope",
+    type: ErrorResponseDto,
+  })
   update(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Param('id', ParseUUIDPipe) id: string,
+    @CallerStaff() caller: TenantStaff,
     @Body(new ZodValidationPipe(UpdateSettlementAccountDto.schema))
     body: UpdateSettlementAccountDto,
   ) {
-    return this.service.update(churchId, id, body);
+    return this.service.update(churchId, id, caller, body);
   }
 }

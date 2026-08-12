@@ -213,7 +213,7 @@ graph LR
 | `branch` | Create/read/update under `/churches/:churchId/branches` | Tenant; every mutation (`POST`/`PATCH`) needs `super_admin`/`regional_admin`/`branch_admin` — `finance`/`recorder` read only; `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed the same way as `region`; mutations are authority-checked the same way, including both sides of a move between regions |
 | `staff` | CRUD + invites under `/churches/:churchId/staff` | Tenant + super_admin; every route except clear-login is also open to `regional_admin`/`branch_admin`, capped by [delegated management](./architecture/delegated-staff-management.md); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
-| `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + super_admin, except `GET`, also open to `regional_admin`/`branch_admin`/`finance` (a deliberate, per-route exception to the class-level lock — see [`settlement-account.controller.spec.ts`](../apps/api/src/settlement-account/settlement-account.controller.spec.ts)); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed (a delegated caller's own branch(es) plus any church-wide account); registering an account calls Paystack (bank lookup, name-enquiry, subaccount creation) before writing any row — see [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md) |
+| `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + `super_admin`/`regional_admin`/`branch_admin`/`finance` at the class level (see [`settlement-account.controller.spec.ts`](../apps/api/src/settlement-account/settlement-account.controller.spec.ts)); `create`/`update` are then narrowed per scope level by `SettlementAccountService`'s `SCOPE_LEVEL_ROLES` — a church-wide account stays `super_admin`-only, region/branch accounts also admit a caller whose own scope covers the target (`ScopeService.assertCanActOnScope`); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed (a delegated caller's own branch(es), their containing region(s), plus any church-wide account — see [below](#scoping-a-mutation-is-not-the-same-check-as-scoping-a-list) for why list-visibility resolves upward but authority never does); registering an account calls Paystack (bank lookup, name-enquiry, subaccount creation) only after both the scope-membership check (`ScopeService.assertScopeRefInChurch`) and the authority check pass — see [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md) and [ADR-0020](../apps/api/docs/adr/0020-settlement-account-scope-and-delegated-registration.md) |
 | `settlement-account` (banks) | `GET /banks` | Session only — the Nigerian bank directory is the same for every church, so this is deliberately not nested under a church |
 | `payments` (donations) | `POST /me/churches/:churchId/donations` | Session + `VerifiedPhoneGuard`; **not rate limited** (#115 not built) — see [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md) for the accepted-gap statement and its mitigations |
 | `payments` (webhook) | `POST /webhooks/paystack` | **Public** — trust comes from a verified HMAC signature, not a session; excluded from Swagger |
@@ -291,8 +291,8 @@ code after an unbounded fetch, resolving a caller's region/branch scopes via
 
 `ScopeService.coveredRegionIds`/`coveredBranchIds` resolve a branch scope *up* to its containing
 region — correct for **visibility** (a branch-scoped clerk may see the region their branch sits
-in), and their own comment says so: "For visibility only: do not use for authority checks." Using
-them to gate a mutation was exactly the bug in
+in), and their own JSDoc says so: "FOR READ/VISIBILITY ONLY: Do NOT use this for write/management
+permission checks!" Using them to gate a mutation was exactly the bug in
 [koru-app/koru#96](https://github.com/koru-app/koru/issues/96): `RegionService.update`/`.remove`
 and `BranchService.update` checked only that a row belonged to the caller's *church*
 (`findById(churchId, id)`), never that it belonged to the caller's *scope* within it — so a
@@ -301,7 +301,15 @@ and `BranchService.update` checked only that a row belonged to the caller's *chu
 The fix, and the pattern for any future mutation on a scoped resource: authority is
 `ScopeService.assertCanActOnScope(caller, target)`, built on `scopeCovers` — the one-directional
 check (a region scope reaches its branches; a branch scope never reaches back up to its own
-region) that `StaffService.assertCanManageStaff` already used for staff mutations. Creating a
+region) that `StaffService.assertCanManageStaff` already used for staff mutations. `scopeCovers`
+is itself now built on a lower-level `covers(churchId, outer, inner)`, pure resource containment
+over `ScopeLevel` (`church`/`region`/`branch`) with no notion of a caller — `SettlementAccount`
+reuses `covers` directly (via `assertScopeRefInChurch`, which checks a `scopeRefId` actually names
+a Region/Branch belonging to the church) because a `ScopeType` (`region`/`branch`, no `church`
+value — [#140](https://github.com/koru-app/koru/issues/140)) is the wrong shape for a resource
+that can itself be church-scoped. See
+[ADR-0020](../apps/api/docs/adr/0020-settlement-account-scope-and-delegated-registration.md) for
+why the two relations are kept separate rather than merged. Creating a
 branch inside a region, and moving a branch between regions, both need authority over **every**
 region touched — creation checks the destination, a move checks the branch's current region *and*
 the destination — or a `regional_admin` could plant a branch in, steal a branch from, or fling a

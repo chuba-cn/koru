@@ -29,16 +29,23 @@ _Avoid_: Donor, Giver, Congregant, User (a User/Staff has a login; a Member neve
 A church worker with a login who administers KORU, holding a role and one or more scopes.
 _Avoid_: User, Admin, Operator (Admin names a role, not the person)
 
+**Scope Level**:
+How far a scoped thing reaches: the whole Church, one Region, or one Branch. The reach of a
+Campaign or a Settlement Account, never of a person.
+_Avoid_: Scope Type (that names the Staff Scope enum, which has no church value on purpose),
+Audience, Visibility
+
+**Staff Scope**:
+The Region(s) or Branch(es) a Staff member may act within. Never church-wide — church-wide
+authority is the super_admin role, not a scope.
+_Avoid_: Scope Level (a Scope Level is where a *resource* reaches; a Staff Scope is where a
+*person* may act), Permission, Role (a Role is *what* they may do; a Scope is *where*)
+
 ### Giving
 
 **Campaign**:
-A fundraising effort with a monetary target and a Scope, that Members give toward.
+A fundraising effort with a monetary target and a Scope Level, that Members give toward.
 _Avoid_: Project, Fund, Appeal, Drive
-
-**Scope**:
-The reach of a Campaign — the whole Church, one Region, or one Branch — which decides who sees
-and is nudged for it.
-_Avoid_: Audience, Visibility, Level
 
 **Pledge**:
 A Member's promise to give a specific amount to a Campaign. A commitment, not money yet.

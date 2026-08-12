@@ -216,7 +216,7 @@ export class PaystackAdapter implements PaymentGateway {
       });
       if (cursor) query.set('next', cursor);
 
-      const body = await this.request('GET', `/banks?${query.toString()}`);
+      const body = await this.request('GET', `/bank?${query.toString()}`);
       rows.push(...(body.data as Array<Record<string, unknown>>));
       cursor = body.meta?.next ?? undefined;
     } while (cursor);

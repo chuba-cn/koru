@@ -39,5 +39,6 @@ export * from './payments.js';
 export * from './region.js';
 export * from './resend-webhook.js';
 export * from './schemas.js';
+export * from './scope.js';
 export * from './settlement-account.js';
 export * from './staff.js';

@@ -1,9 +1,10 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { ScopeService } from './scope.service';
 import type { TenantStaff } from './tenant.guard';
 
 const CHURCH = 'church-1';
+const OTHER_CHURCH = 'church-2';
 const REGION = 'region-1';
 const OTHER_REGION = 'region-2';
 const BRANCH_IN_REGION = 'branch-in-region';
@@ -12,13 +13,24 @@ const BRANCH_ELSEWHERE = 'branch-elsewhere';
 function fakePrisma() {
   return {
     branch: {
-      findFirst: vi.fn(({ where }: { where: { id: string; regionId: string } }) => {
-        const inRegion = where.id === BRANCH_IN_REGION && where.regionId === REGION;
-        return Promise.resolve(inRegion ? { id: BRANCH_IN_REGION } : null);
-      }),
+      findFirst: vi.fn(
+        ({ where }: { where: { id: string; regionId?: string; churchId: string } }) => {
+          const inRegion =
+            where.id === BRANCH_IN_REGION && where.regionId === REGION && where.churchId === CHURCH;
+          const inChurch = where.id === BRANCH_IN_REGION && where.churchId === CHURCH;
+          const matches = 'regionId' in where ? inRegion : inChurch;
+          return Promise.resolve(matches ? { id: BRANCH_IN_REGION } : null);
+        },
+      ),
       findMany: vi.fn(
         (): Promise<Array<{ id?: string; regionId?: string | null }>> => Promise.resolve([]),
       ),
+    },
+    region: {
+      findFirst: vi.fn(({ where }: { where: { id: string; churchId: string } }) => {
+        const found = where.id === REGION && where.churchId === CHURCH;
+        return Promise.resolve(found ? { id: REGION } : null);
+      }),
     },
   };
 }
@@ -29,28 +41,30 @@ function callerWith(scopes: TenantStaff['scopes']): TenantStaff {
 
 describe('ScopeService', () => {
   describe('branchInRegion', () => {
-    it('is true when the branch belongs to that region', async () => {
+    it('is true when the branch belongs to that region and church', async () => {
       const service = new ScopeService(fakePrisma() as never);
-      await expect(service.branchInRegion(BRANCH_IN_REGION, REGION)).resolves.toBe(true);
+      await expect(service.branchInRegion(CHURCH, BRANCH_IN_REGION, REGION)).resolves.toBe(true);
     });
 
     it('is false when the branch belongs to a different region', async () => {
       const service = new ScopeService(fakePrisma() as never);
-      await expect(service.branchInRegion(BRANCH_IN_REGION, OTHER_REGION)).resolves.toBe(false);
+      await expect(service.branchInRegion(CHURCH, BRANCH_IN_REGION, OTHER_REGION)).resolves.toBe(
+        false,
+      );
+    });
+
+    it('is false when the branch and region match but the church does not', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(service.branchInRegion(OTHER_CHURCH, BRANCH_IN_REGION, REGION)).resolves.toBe(
+        false,
+      );
     });
 
     it('is false for a branch with no region at all', async () => {
       const service = new ScopeService(fakePrisma() as never);
-      await expect(service.branchInRegion(BRANCH_ELSEWHERE, REGION)).resolves.toBe(false);
+      await expect(service.branchInRegion(CHURCH, BRANCH_ELSEWHERE, REGION)).resolves.toBe(false);
     });
 
-    /**
-     * Prisma treats an undefined where-value as an omitted filter, not a
-     * wildcard — without this guard, a malformed regionId would widen the
-     * check into "does a branch with this id exist at all," not "is it in
-     * that region." Verified against a fake that returns true whenever the
-     * regionId argument is falsy, since a real omitted filter would do the same.
-     */
     it.each([
       undefined,
       null,
@@ -66,7 +80,7 @@ describe('ScopeService', () => {
       const service = new ScopeService(prisma as never);
 
       await expect(
-        service.branchInRegion(BRANCH_IN_REGION, badRegionId as unknown as string),
+        service.branchInRegion(CHURCH, BRANCH_IN_REGION, badRegionId as unknown as string),
       ).resolves.toBe(false);
       expect(prisma.branch.findFirst).not.toHaveBeenCalled();
     });
@@ -77,71 +91,135 @@ describe('ScopeService', () => {
       '',
     ] as const)('is false when branchId is %s, for the same reason', async (badBranchId) => {
       const service = new ScopeService(fakePrisma() as never);
-      await expect(service.branchInRegion(badBranchId as unknown as string, REGION)).resolves.toBe(
-        false,
-      );
+      await expect(
+        service.branchInRegion(CHURCH, badBranchId as unknown as string, REGION),
+      ).resolves.toBe(false);
+    });
+  });
+
+  describe('covers (resource containment)', () => {
+    it('a church scope contains any region', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.covers(
+          CHURCH,
+          { scopeType: 'church', scopeRefId: null },
+          { scopeType: 'region', scopeRefId: REGION },
+        ),
+      ).resolves.toBe(true);
+    });
+
+    it('a church scope contains any branch', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.covers(
+          CHURCH,
+          { scopeType: 'church', scopeRefId: null },
+          { scopeType: 'branch', scopeRefId: BRANCH_ELSEWHERE },
+        ),
+      ).resolves.toBe(true);
+    });
+
+    it('an exact region match covers', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.covers(
+          CHURCH,
+          { scopeType: 'region', scopeRefId: REGION },
+          { scopeType: 'region', scopeRefId: REGION },
+        ),
+      ).resolves.toBe(true);
+    });
+
+    it('a region covers a branch inside it', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.covers(
+          CHURCH,
+          { scopeType: 'region', scopeRefId: REGION },
+          { scopeType: 'branch', scopeRefId: BRANCH_IN_REGION },
+        ),
+      ).resolves.toBe(true);
+    });
+
+    it('a region does not cover a branch outside it', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.covers(
+          CHURCH,
+          { scopeType: 'region', scopeRefId: OTHER_REGION },
+          { scopeType: 'branch', scopeRefId: BRANCH_IN_REGION },
+        ),
+      ).resolves.toBe(false);
+    });
+
+    it('a branch never covers its own containing region — one-directional', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.covers(
+          CHURCH,
+          { scopeType: 'branch', scopeRefId: BRANCH_IN_REGION },
+          { scopeType: 'region', scopeRefId: REGION },
+        ),
+      ).resolves.toBe(false);
+    });
+
+    it('a branch does not cover any other branch', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.covers(
+          CHURCH,
+          { scopeType: 'branch', scopeRefId: BRANCH_IN_REGION },
+          { scopeType: 'branch', scopeRefId: BRANCH_ELSEWHERE },
+        ),
+      ).resolves.toBe(false);
     });
   });
 
   describe('scopeCovers', () => {
     it('covers an exact region match', async () => {
       const service = new ScopeService(fakePrisma() as never);
-      const covers = await service.scopeCovers([{ scopeType: 'region', scopeRefId: REGION }], {
-        scopeType: 'region',
-        scopeRefId: REGION,
-      });
-      expect(covers).toBe(true);
-    });
-
-    it('covers an exact branch match', async () => {
-      const service = new ScopeService(fakePrisma() as never);
       const covers = await service.scopeCovers(
-        [{ scopeType: 'branch', scopeRefId: BRANCH_IN_REGION }],
-        { scopeType: 'branch', scopeRefId: BRANCH_IN_REGION },
+        CHURCH,
+        [{ scopeType: 'region', scopeRefId: REGION }],
+        { scopeType: 'region', scopeRefId: REGION },
       );
       expect(covers).toBe(true);
     });
 
     it('covers a branch inside a region the caller holds', async () => {
       const service = new ScopeService(fakePrisma() as never);
-      const covers = await service.scopeCovers([{ scopeType: 'region', scopeRefId: REGION }], {
-        scopeType: 'branch',
-        scopeRefId: BRANCH_IN_REGION,
-      });
+      const covers = await service.scopeCovers(
+        CHURCH,
+        [{ scopeType: 'region', scopeRefId: REGION }],
+        { scopeType: 'branch', scopeRefId: BRANCH_IN_REGION },
+      );
       expect(covers).toBe(true);
     });
 
     it("does not cover a branch outside the caller's region", async () => {
       const service = new ScopeService(fakePrisma() as never);
       const covers = await service.scopeCovers(
+        CHURCH,
         [{ scopeType: 'region', scopeRefId: OTHER_REGION }],
         { scopeType: 'branch', scopeRefId: BRANCH_IN_REGION },
       );
       expect(covers).toBe(false);
     });
 
-    /**
-     * A branch scope must never reach upward to its own containing region —
-     * that would let branch-level staff claim region-level authority.
-     */
-    it('does not let a branch scope cover its own containing region', async () => {
-      const service = new ScopeService(fakePrisma() as never);
-      const covers = await service.scopeCovers(
-        [{ scopeType: 'branch', scopeRefId: BRANCH_IN_REGION }],
-        { scopeType: 'region', scopeRefId: REGION },
-      );
-      expect(covers).toBe(false);
-    });
-
     it('does not cover when the caller has no scopes at all', async () => {
       const service = new ScopeService(fakePrisma() as never);
-      const covers = await service.scopeCovers([], { scopeType: 'region', scopeRefId: REGION });
+      const covers = await service.scopeCovers(CHURCH, [], {
+        scopeType: 'region',
+        scopeRefId: REGION,
+      });
       expect(covers).toBe(false);
     });
 
     it('covers when any one of several scopes matches, not just the first', async () => {
       const service = new ScopeService(fakePrisma() as never);
       const covers = await service.scopeCovers(
+        CHURCH,
         [
           { scopeType: 'region', scopeRefId: OTHER_REGION },
           { scopeType: 'branch', scopeRefId: BRANCH_IN_REGION },
@@ -151,26 +229,78 @@ describe('ScopeService', () => {
       expect(covers).toBe(true);
     });
 
-    /**
-     * Region and branch ids never collide (separate tables), so a test built
-     * only from realistic ids can't tell "the region->branch guard is present"
-     * apart from "region and branch ids never happen to match." Stubbing
-     * branchInRegion directly pins the guard itself, independent of id luck.
-     */
-    it('never attempts a containment check for a branch-scoped caller, exact match or not', async () => {
-      const service = new ScopeService(fakePrisma() as never);
-      const containmentCheck = vi.spyOn(service, 'branchInRegion');
+    it('threads churchId through to the containment check', async () => {
+      const prisma = fakePrisma();
+      const service = new ScopeService(prisma as never);
 
-      await service.scopeCovers([{ scopeType: 'branch', scopeRefId: BRANCH_IN_REGION }], {
-        scopeType: 'region',
-        scopeRefId: REGION,
-      });
-      await service.scopeCovers([{ scopeType: 'branch', scopeRefId: BRANCH_IN_REGION }], {
+      await service.scopeCovers(OTHER_CHURCH, [{ scopeType: 'region', scopeRefId: REGION }], {
         scopeType: 'branch',
-        scopeRefId: BRANCH_ELSEWHERE,
+        scopeRefId: BRANCH_IN_REGION,
       });
 
-      expect(containmentCheck).not.toHaveBeenCalled();
+      expect(prisma.branch.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ churchId: OTHER_CHURCH }) }),
+      );
+    });
+  });
+
+  describe('assertScopeRefInChurch', () => {
+    it('is a no-op for a church scope, with no query at all', async () => {
+      const prisma = fakePrisma();
+      const service = new ScopeService(prisma as never);
+
+      await expect(
+        service.assertScopeRefInChurch(CHURCH, { scopeType: 'church', scopeRefId: null }),
+      ).resolves.toBeUndefined();
+      expect(prisma.region.findFirst).not.toHaveBeenCalled();
+      expect(prisma.branch.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('passes for a region that exists in this church', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.assertScopeRefInChurch(CHURCH, { scopeType: 'region', scopeRefId: REGION }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('throws for a region that does not exist in this church', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.assertScopeRefInChurch(CHURCH, {
+          scopeType: 'region',
+          scopeRefId: OTHER_REGION,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws for a region that belongs to a different church — a tenant crossing', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.assertScopeRefInChurch(OTHER_CHURCH, {
+          scopeType: 'region',
+          scopeRefId: REGION,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('passes for a branch that exists in this church', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.assertScopeRefInChurch(CHURCH, {
+          scopeType: 'branch',
+          scopeRefId: BRANCH_IN_REGION,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('throws for a branch that does not exist in this church', async () => {
+      const service = new ScopeService(fakePrisma() as never);
+      await expect(
+        service.assertScopeRefInChurch(CHURCH, {
+          scopeType: 'branch',
+          scopeRefId: BRANCH_ELSEWHERE,
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -306,11 +436,6 @@ describe('ScopeService', () => {
     });
   });
 
-  /**
-   * #96: the authority check for mutating a region/branch. It is deliberately
-   * built on the one-directional scopeCovers, not the visibility helpers, so a
-   * branch-scoped caller can never gain authority over its containing region.
-   */
   describe('assertCanActOnScope', () => {
     const superAdmin: TenantStaff = {
       id: 'caller-1',
@@ -351,7 +476,7 @@ describe('ScopeService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('refuses a branch-scoped caller acting on their containing region — the #96 escalation', async () => {
+    it('refuses a branch-scoped caller acting on their containing region', async () => {
       const service = new ScopeService(fakePrisma() as never);
 
       await expect(
@@ -360,6 +485,21 @@ describe('ScopeService', () => {
           { scopeType: 'region', scopeRefId: REGION },
         ),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it("uses the caller's own churchId, never a value from the target", async () => {
+      const prisma = fakePrisma();
+      const service = new ScopeService(prisma as never);
+      const caller = callerWith([{ scopeType: 'region', scopeRefId: REGION }]);
+
+      await service.assertCanActOnScope(caller, {
+        scopeType: 'branch',
+        scopeRefId: BRANCH_IN_REGION,
+      });
+
+      expect(prisma.branch.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ churchId: caller.churchId }) }),
+      );
     });
   });
 });

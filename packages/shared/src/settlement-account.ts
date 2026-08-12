@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { PaginationQuerySchema } from './pagination.js';
+import { ScopeLevelSchema, ScopeRefSchema, ScopeRefShape } from './scope.js';
 
 const NubanSchema = z.string().regex(/^\d{10}$/, 'account number must be exactly 10 digits');
 
-export const CreateSettlementAccountSchema = z.object({
+export const CreateSettlementAccountSchema = ScopeRefSchema.extend({
   label: z.string().min(2).max(120),
   accountNumber: NubanSchema,
   bankCode: z.string().min(1).max(20),
-  branchId: z.uuid().optional(),
 });
 
 export const UpdateSettlementAccountSchema = z.object({
@@ -15,13 +15,14 @@ export const UpdateSettlementAccountSchema = z.object({
 });
 
 export const ListSettlementAccountsQuerySchema = PaginationQuerySchema.extend({
-  branchId: z.uuid().optional(),
+  scopeType: ScopeLevelSchema.optional(),
+  scopeRefId: z.uuid().optional(),
 });
 
-export const SettlementAccountSchema = z.object({
+export const SettlementAccountSchema = ScopeRefShape.extend({
   id: z.uuid(),
   churchId: z.uuid(),
-  branchId: z.uuid().nullable(),
+  scopeRefId: z.uuid().nullable(),
   label: z.string(),
   bankName: z.string().nullable(),
   bankCode: z.string().nullable(),

@@ -612,6 +612,7 @@ describe('StaffService.create — delegated onboarding authorization', () => {
       ),
     ).rejects.toThrow(ForbiddenException);
     expect(scopeService.scopeCovers).toHaveBeenCalledWith(
+      CHURCH,
       [{ scopeType: 'region', scopeRefId: REGION }],
       { scopeType: 'branch', scopeRefId: 'someone-elses-branch' },
     );

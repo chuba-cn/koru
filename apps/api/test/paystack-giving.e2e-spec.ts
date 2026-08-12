@@ -98,7 +98,7 @@ async function seedActiveCampaign(
   subaccountCode = 'ACCT_test',
 ) {
   const account = await prisma.settlementAccount.create({
-    data: { churchId, label: 'Main', providerSubaccountCode: subaccountCode },
+    data: { churchId, scopeType: 'church', label: 'Main', providerSubaccountCode: subaccountCode },
   });
   const campaign = await prisma.campaign.create({
     data: {
@@ -491,7 +491,7 @@ describe('Paystack Pay-with-Transfer giving (e2e, #107)', () => {
   it('rejects giving when the settlement account has no Paystack subaccount code', async () => {
     const { churchId } = await createAuthedChurch(app);
     const account = await prisma.settlementAccount.create({
-      data: { churchId, label: 'Unregistered' },
+      data: { churchId, scopeType: 'church', label: 'Unregistered' },
     });
     const campaign = await prisma.campaign.create({
       data: {
