@@ -273,7 +273,7 @@ gets slower the further a client pages, and it isn't stable under concurrent ins
 concerns at KORU's target scale of a single tenant with 30,000+ members and 500+ branches.
 `MemberService`'s four lists (`listBranches`, `myProfile`'s memberships, `myPledges`,
 `myPayments`) moved onto this same contract in
-[koru-app/koru#84](https://github.com/koru-app/koru/issues/84) — every list endpoint in the API is
+[chuba-cn/koru#84](https://github.com/chuba-cn/koru/issues/84) — every list endpoint in the API is
 now on the shared contract; an unpaginated list is a regression, not a known gap. See
 [ADR-0006](../apps/api/docs/adr/0006-standard-error-shape-no-envelope.md)'s update.
 
@@ -293,7 +293,7 @@ code after an unbounded fetch, resolving a caller's region/branch scopes via
 region — correct for **visibility** (a branch-scoped clerk may see the region their branch sits
 in), and their own comment says so: "For visibility only: do not use for authority checks." Using
 them to gate a mutation was exactly the bug in
-[koru-app/koru#96](https://github.com/koru-app/koru/issues/96): `RegionService.update`/`.remove`
+[chuba-cn/koru#96](https://github.com/chuba-cn/koru/issues/96): `RegionService.update`/`.remove`
 and `BranchService.update` checked only that a row belonged to the caller's *church*
 (`findById(churchId, id)`), never that it belonged to the caller's *scope* within it — so a
 `branch_admin` could rename or delete any region in the church.

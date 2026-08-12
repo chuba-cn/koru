@@ -82,7 +82,7 @@ It is worthless here, for four specific reasons:
 1. It does not exercise the guards — constructing the class directly skips the entire NestJS pipeline.
 2. It does not exercise the validation pipe, or status codes.
 3. It restates a one-line delegation, so it only fails when you deliberately change that line.
-4. **It would pass even if the controller had no guards at all** — which is exactly the bug we shipped in [#12](https://github.com/koru-app/koru/issues/12).
+4. **It would pass even if the controller had no guards at all** — which is exactly the bug we shipped in [#12](https://github.com/chuba-cn/koru/issues/12).
 
 The e2e suite already proves delegation works, over real HTTP. Repeating it against a mock adds maintenance and false confidence.
 
@@ -213,7 +213,7 @@ That is the confirmation. Do this for any test whose whole purpose is to catch a
 
 **Use coverage to find code you forgot to test. Do not treat the percentage as a score to maximise.**
 
-There is deliberately **no coverage threshold**, and that is a decision rather than an oversight. A threshold enforced from a near-zero baseline rewards writing shallow tests that execute lines without asserting anything meaningful — the exact habit "assert behaviour, not calls" exists to prevent. Worth revisiting once [#31](https://github.com/koru-app/koru/issues/31) has backfilled the existing code and a number would measure something real.
+There is deliberately **no coverage threshold**, and that is a decision rather than an oversight. A threshold enforced from a near-zero baseline rewards writing shallow tests that execute lines without asserting anything meaningful — the exact habit "assert behaviour, not calls" exists to prevent. Worth revisiting once [#31](https://github.com/chuba-cn/koru/issues/31) has backfilled the existing code and a number would measure something real.
 
 ---
 

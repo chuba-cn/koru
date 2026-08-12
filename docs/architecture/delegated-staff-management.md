@@ -148,7 +148,7 @@ themselves). This is a straightforward consequence of the same rule applying uni
 row a caller is authorized to touch, including their own, and mirrors how a `super_admin` could
 already act on their own row before this change. It is not guarded against here; a church being
 left without any `super_admin` is a separate, narrower guard tracked as its own ticket
-(koru-app/koru#50), and a region/branch being left without any admin-tier staff at all is a wider
+(chuba-cn/koru#50), and a region/branch being left without any admin-tier staff at all is a wider
 business-continuity question this ticket does not attempt to solve.
 
 ---

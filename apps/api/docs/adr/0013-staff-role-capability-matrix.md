@@ -18,7 +18,7 @@ further with its own reasoning, the way settlement accounts already are.
 
 **`recorder` is read + one narrow write, nothing destructive.** Broad read across its scope, plus
 recording Offline Payments and triggering Nudges once those endpoints exist (they don't yet — see
-koru-app/koru#46). No create, no update, no delete, no staff management. It reuses the same
+chuba-cn/koru#46). No create, no update, no delete, no staff management. It reuses the same
 `StaffScope` model as the other scoped roles.
 
 **A route with no `@StaffRoles` decorator is a deliberate open-read default, not an oversight.**
@@ -26,7 +26,7 @@ koru-app/koru#46). No create, no update, no delete, no staff management. It reus
 `GET` in this codebase stays open to `recorder` without a second guard mechanism. It is not a gap
 to "fix" by adding a decorator to every read route; it only becomes a real gap on a *mutating*
 route, which is why `RegionController` and `BranchController`'s POST/PATCH/DELETE routes carry an
-explicit admin-tier `@StaffRoles(...)` list (koru-app/koru#47) while their GET routes carry none.
+explicit admin-tier `@StaffRoles(...)` list (chuba-cn/koru#47) while their GET routes carry none.
 
 Any future role must be placed on one side of this line explicitly — admin-tier (full CRUD within
 scope) or `recorder`-tier (read + specific narrow writes) — rather than left to accumulate whatever
@@ -37,9 +37,9 @@ a controller's decorator list happened to admit.
 `regional_admin` and `branch_admin` can now create, update, remove, and manage the invites of
 staff too, each capped at their own tier and confined to their own scope — see
 [Delegated staff management](../../../docs/architecture/delegated-staff-management.md)
-(koru-app/koru#49). This now includes `link-login` (koru-app/koru#63), attaching a verified existing
+(chuba-cn/koru#49). This now includes `link-login` (chuba-cn/koru#63), attaching a verified existing
 login to a pending staff record — the same tier/scope rules as re-issuing an invite, since it's a
-third route to the same outcome. The one exception is `clear-login` (koru-app/koru#62, the narrowed
+third route to the same outcome. The one exception is `clear-login` (chuba-cn/koru#62, the narrowed
 successor to the retired login-reclaim), which stays `super_admin`-only per ADR-0012's own reasoning:
 deleting another person's account is irreversible and reaches outside the tenant's own data, unlike
 attaching a `userId` column. This does not change the role/tier lines drawn above; it changes who may
