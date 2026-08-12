@@ -12,6 +12,12 @@ below. Pure glossary — no implementation details.
 A Church's real bank account, registered with Paystack, into which a Campaign's money settles.
 _Avoid_: Wallet, Purse, Bank Account (the domain term is Settlement Account)
 
+**Settlement Account Scope**:
+A Settlement Account's [Scope Level](../../packages/shared/CONTEXT.md), deciding who may register
+or relabel it and who can see it at all.
+_Avoid_: Branch account, Account owner, Staff Scope (a Staff Scope is where a *person* may act; a
+Settlement Account Scope is where an *account* reaches)
+
 **Subaccount**:
 The Paystack-side representation of a Settlement Account, used to route funds to it.
 _Avoid_: Split account

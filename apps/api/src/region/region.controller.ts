@@ -116,7 +116,10 @@ export class RegionController {
   @ApiOperation({ summary: 'Delete an empty region' })
   @ApiNoContentResponse({ description: 'Region deleted' })
   @ApiNotFoundResponse({ description: 'Church or region not found', type: ErrorResponseDto })
-  @ApiConflictResponse({ description: 'Region still has branches', type: ErrorResponseDto })
+  @ApiConflictResponse({
+    description: 'Region still has branches, campaigns or settlement accounts',
+    type: ErrorResponseDto,
+  })
   remove(
     @Param('churchId', ParseUUIDPipe) churchId: string,
     @Param('id', ParseUUIDPipe) id: string,

@@ -40,6 +40,8 @@ function fakePrisma() {
       delete: vi.fn(() => Promise.resolve(REGION)),
     },
     branch: { count: vi.fn(() => Promise.resolve(0)) },
+    campaign: { count: vi.fn(() => Promise.resolve(0)) },
+    settlementAccount: { count: vi.fn(() => Promise.resolve(0)) },
   };
 }
 
@@ -196,6 +198,57 @@ describe('RegionService', () => {
         /branch/,
       );
       expect(prisma.region.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses to delete a region with a region-scoped campaign, naming it in the message', async () => {
+      const prisma = fakePrisma();
+      prisma.campaign.count.mockResolvedValue(2);
+      const service = new RegionService(prisma as never, fakeScopeService() as never);
+
+      await expect(service.remove(CHURCH, REGION.id, callerWith('super_admin'))).rejects.toThrow(
+        /2 campaign\(s\)/,
+      );
+      expect(prisma.region.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses to delete a region with a region-scoped settlement account, naming it in the message', async () => {
+      const prisma = fakePrisma();
+      prisma.settlementAccount.count.mockResolvedValue(1);
+      const service = new RegionService(prisma as never, fakeScopeService() as never);
+
+      await expect(service.remove(CHURCH, REGION.id, callerWith('super_admin'))).rejects.toThrow(
+        /1 settlement account\(s\)/,
+      );
+      expect(prisma.region.delete).not.toHaveBeenCalled();
+    });
+
+    it('names every blocker at once, not just the first one found', async () => {
+      const prisma = fakePrisma();
+      prisma.branch.count.mockResolvedValue(1);
+      prisma.campaign.count.mockResolvedValue(1);
+      prisma.settlementAccount.count.mockResolvedValue(1);
+      const service = new RegionService(prisma as never, fakeScopeService() as never);
+
+      await expect(service.remove(CHURCH, REGION.id, callerWith('super_admin'))).rejects.toThrow(
+        /branch\(es\).*campaign\(s\).*settlement account\(s\)/,
+      );
+    });
+
+    it('scopes every blocker count to this church, not just the region id', async () => {
+      const prisma = fakePrisma();
+      const service = new RegionService(prisma as never, fakeScopeService() as never);
+
+      await service.remove(CHURCH, REGION.id, callerWith('super_admin'));
+
+      expect(prisma.branch.count).toHaveBeenCalledWith({
+        where: { churchId: CHURCH, regionId: REGION.id },
+      });
+      expect(prisma.campaign.count).toHaveBeenCalledWith({
+        where: { churchId: CHURCH, scopeType: 'region', scopeRefId: REGION.id },
+      });
+      expect(prisma.settlementAccount.count).toHaveBeenCalledWith({
+        where: { churchId: CHURCH, scopeType: 'region', scopeRefId: REGION.id },
+      });
     });
 
     it('deletes an empty region', async () => {

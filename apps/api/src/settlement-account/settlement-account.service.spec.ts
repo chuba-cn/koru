@@ -1,11 +1,18 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { TenantStaff } from '../auth/tenant.guard';
 import { Prisma } from '../generated/prisma/client';
 import { SettlementAccountService } from './settlement-account.service';
 
 const CHURCH = 'church-1';
+const REGION = 'region-1';
 const BRANCH = 'branch-1';
+const OTHER_BRANCH = 'branch-2';
 const BANKS = [
   { name: 'GTBank', slug: 'gtbank', code: '058', currency: 'NGN', active: true },
   { name: 'Zenith Bank', slug: 'zenith-bank', code: '057', currency: 'NGN', active: true },
@@ -21,12 +28,19 @@ const SUBACCOUNT = {
 const ACCOUNT = {
   id: 'account-1',
   churchId: CHURCH,
-  branchId: null,
+  scopeType: 'branch' as const,
+  scopeRefId: BRANCH,
   label: 'Main Account',
   bankName: 'GTBank',
   bankCode: '058',
   accountName: 'Resolved Real Name',
   accountNumberMasked: '******7890',
+};
+const CHURCH_ACCOUNT = {
+  ...ACCOUNT,
+  id: 'account-church',
+  scopeType: 'church' as const,
+  scopeRefId: null,
 };
 
 function fakePrisma() {
@@ -34,11 +48,6 @@ function fakePrisma() {
     church: {
       findUnique: vi.fn(({ where }: { where: { id: string } }) =>
         Promise.resolve(where.id === CHURCH ? { id: CHURCH, name: 'Grace Chapel' } : null),
-      ),
-    },
-    branch: {
-      findFirst: vi.fn(({ where }: { where: { id: string; churchId: string } }) =>
-        Promise.resolve(where.id === BRANCH && where.churchId === CHURCH ? { id: BRANCH } : null),
       ),
     },
     settlementAccount: {
@@ -51,7 +60,9 @@ function fakePrisma() {
         Promise.resolve(
           where.id === ACCOUNT.id && where.churchId === CHURCH
             ? (ACCOUNT as Record<string, unknown>)
-            : null,
+            : where.id === CHURCH_ACCOUNT.id && where.churchId === CHURCH
+              ? (CHURCH_ACCOUNT as Record<string, unknown>)
+              : null,
         ),
       ),
       update: vi.fn(({ data }: { data: Record<string, unknown> }) =>
@@ -72,9 +83,26 @@ function p2002On(target: string[]) {
   return error;
 }
 
-function fakeScopeService(overrides: { branchIds?: string[] } = {}) {
+function fakeScopeService(
+  overrides: {
+    branchIds?: string[];
+    regionIds?: string[];
+    scopeRefFails?: boolean;
+    actOnScopeFails?: boolean;
+  } = {},
+) {
   return {
-    coveredRegionIds: vi.fn(() => Promise.resolve([])),
+    assertScopeRefInChurch: vi.fn(() =>
+      overrides.scopeRefFails
+        ? Promise.reject(new BadRequestException('scopeRefId does not reference a region/branch'))
+        : Promise.resolve(undefined),
+    ),
+    assertCanActOnScope: vi.fn(() =>
+      overrides.actOnScopeFails
+        ? Promise.reject(new ForbiddenException('cannot act on this scope'))
+        : Promise.resolve(undefined),
+    ),
+    coveredRegionIds: vi.fn(() => Promise.resolve(overrides.regionIds ?? [])),
     coveredBranchIds: vi.fn(() => Promise.resolve(overrides.branchIds ?? [])),
   };
 }
@@ -91,7 +119,19 @@ function callerWith(role: TenantStaff['role'], scopes: TenantStaff['scopes'] = [
   return { id: 'caller-1', churchId: CHURCH, role, scopes };
 }
 
-const CREATE_INPUT = { label: 'Main', accountNumber: '1234567890', bankCode: '058' };
+const SUPER_ADMIN = callerWith('super_admin');
+const CREATE_INPUT = {
+  label: 'Main',
+  accountNumber: '1234567890',
+  bankCode: '058',
+  scopeType: 'branch' as const,
+  scopeRefId: BRANCH,
+};
+const CREATE_CHURCH_INPUT = {
+  ...CREATE_INPUT,
+  scopeType: 'church' as const,
+  scopeRefId: undefined,
+};
 
 describe('SettlementAccountService', () => {
   describe('create', () => {
@@ -103,26 +143,116 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await expect(service.create('no-such-church', CREATE_INPUT)).rejects.toThrow(
+      await expect(service.create('no-such-church', SUPER_ADMIN, CREATE_INPUT)).rejects.toThrow(
         NotFoundException,
       );
       expect(gateway.listBanks).not.toHaveBeenCalled();
     });
 
-    it('rejects a branchId that belongs to a different church', async () => {
+    it('rejects a scopeRefId that does not name a region/branch of this church, before touching the gateway', async () => {
       const prisma = fakePrisma();
+      const scopeService = fakeScopeService({ scopeRefFails: true });
       const gateway = fakeGateway();
       const service = new SettlementAccountService(
         prisma as never,
+        scopeService as never,
+        gateway as never,
+      );
+
+      await expect(service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(gateway.listBanks).not.toHaveBeenCalled();
+      expect(prisma.settlementAccount.create).not.toHaveBeenCalled();
+    });
+
+    it('checks the scope ref before the role/scope authority check', async () => {
+      const scopeService = fakeScopeService();
+      const service = new SettlementAccountService(
+        fakePrisma() as never,
+        scopeService as never,
+        fakeGateway() as never,
+      );
+
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT);
+
+      const refCallOrder = scopeService.assertScopeRefInChurch.mock.invocationCallOrder[0];
+      const authCallOrder = scopeService.assertCanActOnScope.mock.invocationCallOrder[0];
+      expect(refCallOrder).toBeLessThan(authCallOrder as number);
+    });
+
+    it.each([
+      ['regional_admin', 'church'],
+      ['branch_admin', 'church'],
+      ['finance', 'church'],
+      ['branch_admin', 'region'],
+    ] as const)('refuses a %s registering a %s-level account, and never calls the gateway', async (role, scopeType) => {
+      const gateway = fakeGateway();
+      const service = new SettlementAccountService(
+        fakePrisma() as never,
         fakeScopeService() as never,
         gateway as never,
       );
 
       await expect(
-        service.create(CHURCH, { ...CREATE_INPUT, branchId: 'someone-elses-branch' }),
-      ).rejects.toThrow(BadRequestException);
-      expect(prisma.settlementAccount.create).not.toHaveBeenCalled();
+        service.create(CHURCH, callerWith(role), {
+          ...CREATE_INPUT,
+          scopeType,
+          scopeRefId: scopeType === 'church' ? undefined : REGION,
+        }),
+      ).rejects.toThrow(ForbiddenException);
       expect(gateway.listBanks).not.toHaveBeenCalled();
+    });
+
+    it('lets a branch_admin register an account for a branch they cover', async () => {
+      const scopeService = fakeScopeService();
+      const service = new SettlementAccountService(
+        fakePrisma() as never,
+        scopeService as never,
+        fakeGateway() as never,
+      );
+      const caller = callerWith('branch_admin', [{ scopeType: 'branch', scopeRefId: BRANCH }]);
+
+      await service.create(CHURCH, caller, CREATE_INPUT);
+
+      expect(scopeService.assertCanActOnScope).toHaveBeenCalledWith(caller, {
+        scopeType: 'branch',
+        scopeRefId: BRANCH,
+      });
+    });
+
+    it('refuses a branch_admin whose scope does not cover the target branch', async () => {
+      const scopeService = fakeScopeService({ actOnScopeFails: true });
+      const gateway = fakeGateway();
+      const service = new SettlementAccountService(
+        fakePrisma() as never,
+        scopeService as never,
+        gateway as never,
+      );
+
+      await expect(
+        service.create(
+          CHURCH,
+          callerWith('branch_admin', [{ scopeType: 'branch', scopeRefId: OTHER_BRANCH }]),
+          CREATE_INPUT,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(gateway.listBanks).not.toHaveBeenCalled();
+      expect(gateway.resolveAccountNumber).not.toHaveBeenCalled();
+      expect(gateway.createSubaccount).not.toHaveBeenCalled();
+    });
+
+    it('never consults ScopeService.assertCanActOnScope for a church-level account — role alone decides it', async () => {
+      const scopeService = fakeScopeService();
+      const service = new SettlementAccountService(
+        fakePrisma() as never,
+        scopeService as never,
+        fakeGateway() as never,
+      );
+
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_CHURCH_INPUT);
+
+      expect(scopeService.assertCanActOnScope).not.toHaveBeenCalled();
     });
 
     it('rejects an unknown bankCode and calls neither resolveAccountNumber nor createSubaccount', async () => {
@@ -134,9 +264,9 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await expect(service.create(CHURCH, { ...CREATE_INPUT, bankCode: '999999' })).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.create(CHURCH, SUPER_ADMIN, { ...CREATE_INPUT, bankCode: '999999' }),
+      ).rejects.toThrow(BadRequestException);
       expect(gateway.resolveAccountNumber).not.toHaveBeenCalled();
       expect(gateway.createSubaccount).not.toHaveBeenCalled();
       expect(prisma.settlementAccount.create).not.toHaveBeenCalled();
@@ -152,7 +282,9 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await expect(service.create(CHURCH, CREATE_INPUT)).rejects.toThrow(ConflictException);
+      await expect(service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT)).rejects.toThrow(
+        ConflictException,
+      );
       expect(gateway.createSubaccount).not.toHaveBeenCalled();
       expect(prisma.settlementAccount.create).not.toHaveBeenCalled();
     });
@@ -166,7 +298,9 @@ describe('SettlementAccountService', () => {
         fakeGateway() as never,
       );
 
-      await expect(service.create(CHURCH, CREATE_INPUT)).rejects.toThrow(/Building Fund/);
+      await expect(service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT)).rejects.toThrow(
+        /Building Fund/,
+      );
     });
 
     it('looks the duplicate up by hash, never by the plaintext account number', async () => {
@@ -177,7 +311,7 @@ describe('SettlementAccountService', () => {
         fakeGateway() as never,
       );
 
-      await service.create(CHURCH, CREATE_INPUT);
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT);
 
       const where = prisma.settlementAccount.findFirst.mock.calls[0]?.[0]?.where;
       expect(where.accountNumberHash).toMatch(/^[0-9a-f]{64}$/);
@@ -195,7 +329,9 @@ describe('SettlementAccountService', () => {
         fakeGateway() as never,
       );
 
-      await expect(service.create(CHURCH, CREATE_INPUT)).rejects.toThrow(ConflictException);
+      await expect(service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT)).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it('does not disguise a different unique violation as a duplicate bank account', async () => {
@@ -207,7 +343,7 @@ describe('SettlementAccountService', () => {
         fakeGateway() as never,
       );
 
-      await expect(service.create(CHURCH, CREATE_INPUT)).rejects.not.toBeInstanceOf(
+      await expect(service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT)).rejects.not.toBeInstanceOf(
         ConflictException,
       );
     });
@@ -221,7 +357,7 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await service.create(CHURCH, CREATE_INPUT);
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT);
 
       expect(prisma.settlementAccount.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -239,11 +375,45 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await service.create(CHURCH, CREATE_INPUT);
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT);
 
       expect(prisma.settlementAccount.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ accountName: 'Resolved Real Name' }),
+        }),
+      );
+    });
+
+    it('writes the scopeType and scopeRefId the caller submitted', async () => {
+      const prisma = fakePrisma();
+      const service = new SettlementAccountService(
+        prisma as never,
+        fakeScopeService() as never,
+        fakeGateway() as never,
+      );
+
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT);
+
+      expect(prisma.settlementAccount.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ scopeType: 'branch', scopeRefId: BRANCH }),
+        }),
+      );
+    });
+
+    it('writes a null scopeRefId for a church-level account', async () => {
+      const prisma = fakePrisma();
+      const service = new SettlementAccountService(
+        prisma as never,
+        fakeScopeService() as never,
+        fakeGateway() as never,
+      );
+
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_CHURCH_INPUT);
+
+      expect(prisma.settlementAccount.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ scopeType: 'church', scopeRefId: null }),
         }),
       );
     });
@@ -258,7 +428,9 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await expect(service.create(CHURCH, CREATE_INPUT)).rejects.toThrow(BadRequestException);
+      await expect(service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT)).rejects.toThrow(
+        BadRequestException,
+      );
       expect(gateway.createSubaccount).not.toHaveBeenCalled();
       expect(prisma.settlementAccount.create).not.toHaveBeenCalled();
     });
@@ -273,7 +445,9 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await expect(service.create(CHURCH, CREATE_INPUT)).rejects.toThrow('paystack down');
+      await expect(service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT)).rejects.toThrow(
+        'paystack down',
+      );
       expect(prisma.settlementAccount.create).not.toHaveBeenCalled();
     });
 
@@ -286,7 +460,7 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await service.create(CHURCH, CREATE_INPUT);
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT);
 
       expect(gateway.createSubaccount).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -307,7 +481,7 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await service.create(CHURCH, CREATE_INPUT);
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT);
 
       const call = prisma.settlementAccount.create.mock.calls[0]?.[0];
       expect(call?.data.accountNumberMasked).toBe('******7890');
@@ -323,7 +497,7 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await service.create(CHURCH, CREATE_INPUT);
+      await service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT);
 
       const call = prisma.settlementAccount.create.mock.calls[0]?.[0];
       expect(call?.omit).toEqual({ providerSubaccountCode: true, accountNumberHash: true });
@@ -339,7 +513,9 @@ describe('SettlementAccountService', () => {
         gateway as never,
       );
 
-      await expect(service.create(CHURCH, CREATE_INPUT)).rejects.toThrow('db unreachable');
+      await expect(service.create(CHURCH, SUPER_ADMIN, CREATE_INPUT)).rejects.toThrow(
+        'db unreachable',
+      );
     });
   });
 
@@ -354,16 +530,16 @@ describe('SettlementAccountService', () => {
         fakeGateway() as never,
       );
 
-      await service.list(CHURCH, callerWith('super_admin'), query);
+      await service.list(CHURCH, SUPER_ADMIN, query);
 
       expect(prisma.settlementAccount.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { AND: [{ churchId: CHURCH }, {}] } }),
       );
     });
 
-    it('scopes a delegated caller to their covered branches plus any church-wide account', async () => {
+    it('scopes a delegated caller to church-wide plus their covered regions and branches', async () => {
       const prisma = fakePrisma();
-      const scopeService = fakeScopeService({ branchIds: [BRANCH] });
+      const scopeService = fakeScopeService({ branchIds: [BRANCH], regionIds: [REGION] });
       const service = new SettlementAccountService(
         prisma as never,
         scopeService as never,
@@ -373,20 +549,56 @@ describe('SettlementAccountService', () => {
 
       await service.list(CHURCH, caller, query);
 
+      expect(scopeService.coveredRegionIds).toHaveBeenCalledWith(CHURCH, caller);
       expect(scopeService.coveredBranchIds).toHaveBeenCalledWith(CHURCH, caller);
       expect(prisma.settlementAccount.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             AND: [
               { churchId: CHURCH },
-              { OR: [{ branchId: { in: [BRANCH] } }, { branchId: null }] },
+              {
+                OR: [
+                  { scopeType: 'church' },
+                  { scopeType: 'region', scopeRefId: { in: [REGION] } },
+                  { scopeType: 'branch', scopeRefId: { in: [BRANCH] } },
+                ],
+              },
             ],
           },
         }),
       );
     });
 
-    it('composes the existing branchId filter with the scope filter, narrowing rather than bypassing it', async () => {
+    it('sees only the church-wide account, fail-closed, when the caller has no scopes at all', async () => {
+      const prisma = fakePrisma();
+      const scopeService = fakeScopeService();
+      const service = new SettlementAccountService(
+        prisma as never,
+        scopeService as never,
+        fakeGateway() as never,
+      );
+
+      await service.list(CHURCH, callerWith('finance', []), query);
+
+      expect(prisma.settlementAccount.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            AND: [
+              { churchId: CHURCH },
+              {
+                OR: [
+                  { scopeType: 'church' },
+                  { scopeType: 'region', scopeRefId: { in: [] } },
+                  { scopeType: 'branch', scopeRefId: { in: [] } },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+    });
+
+    it('composes an explicit scopeType/scopeRefId filter with the scope arm, narrowing rather than bypassing it', async () => {
       const prisma = fakePrisma();
       const scopeService = fakeScopeService({ branchIds: [BRANCH] });
       const service = new SettlementAccountService(
@@ -396,19 +608,14 @@ describe('SettlementAccountService', () => {
       );
       const caller = callerWith('finance', [{ scopeType: 'branch', scopeRefId: BRANCH }]);
 
-      await service.list(CHURCH, caller, { ...query, branchId: BRANCH });
+      await service.list(CHURCH, caller, { ...query, scopeType: 'branch', scopeRefId: BRANCH });
 
-      expect(prisma.settlementAccount.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            AND: [
-              { churchId: CHURCH },
-              { OR: [{ branchId: { in: [BRANCH] } }, { branchId: null }] },
-              { branchId: BRANCH },
-            ],
-          },
-        }),
-      );
+      const calls = prisma.settlementAccount.findMany.mock.calls as unknown as [
+        { where: { AND: unknown[] } },
+      ][];
+      const call = calls[0]?.[0];
+      expect(call?.where.AND).toContainEqual({ scopeType: 'branch' });
+      expect(call?.where.AND).toContainEqual({ scopeRefId: BRANCH });
     });
 
     it('passes skip:1 and the cursor id through to findMany once the cursor is validated', async () => {
@@ -420,7 +627,7 @@ describe('SettlementAccountService', () => {
         fakeGateway() as never,
       );
 
-      await service.list(CHURCH, callerWith('super_admin'), { ...query, cursor: ACCOUNT.id });
+      await service.list(CHURCH, SUPER_ADMIN, { ...query, cursor: ACCOUNT.id });
 
       expect(prisma.settlementAccount.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ cursor: { id: ACCOUNT.id }, skip: 1 }),
@@ -437,10 +644,7 @@ describe('SettlementAccountService', () => {
       );
 
       await expect(
-        service.list(CHURCH, callerWith('super_admin'), {
-          ...query,
-          cursor: 'someone-elses-account',
-        }),
+        service.list(CHURCH, SUPER_ADMIN, { ...query, cursor: 'someone-elses-account' }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.settlementAccount.findMany).not.toHaveBeenCalled();
     });
@@ -453,7 +657,7 @@ describe('SettlementAccountService', () => {
       );
 
       await expect(
-        service.list(CHURCH, callerWith('super_admin'), { limit: 50, direction: 'backward' }),
+        service.list(CHURCH, SUPER_ADMIN, { limit: 50, direction: 'backward' }),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -473,7 +677,7 @@ describe('SettlementAccountService', () => {
   });
 
   describe('update', () => {
-    it('only ever changes the label, never the account number', async () => {
+    it('only ever changes the label, never the account number or scope', async () => {
       const prisma = fakePrisma();
       const service = new SettlementAccountService(
         prisma as never,
@@ -481,7 +685,7 @@ describe('SettlementAccountService', () => {
         fakeGateway() as never,
       );
 
-      await service.update(CHURCH, ACCOUNT.id, { label: 'New Label' });
+      await service.update(CHURCH, ACCOUNT.id, SUPER_ADMIN, { label: 'New Label' });
 
       expect(prisma.settlementAccount.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { label: 'New Label' } }),
@@ -497,9 +701,58 @@ describe('SettlementAccountService', () => {
       );
 
       await expect(
-        service.update(CHURCH, 'no-such-account', { label: 'New Label' }),
+        service.update(CHURCH, 'no-such-account', SUPER_ADMIN, { label: 'New Label' }),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.settlementAccount.update).not.toHaveBeenCalled();
+    });
+
+    it("authorizes against the account's own loaded scope, not any scope from the request", async () => {
+      const scopeService = fakeScopeService();
+      const service = new SettlementAccountService(
+        fakePrisma() as never,
+        scopeService as never,
+        fakeGateway() as never,
+      );
+
+      await service.update(CHURCH, ACCOUNT.id, SUPER_ADMIN, { label: 'New Label' });
+
+      expect(scopeService.assertCanActOnScope).toHaveBeenCalledWith(SUPER_ADMIN, {
+        scopeType: ACCOUNT.scopeType,
+        scopeRefId: ACCOUNT.scopeRefId,
+      });
+    });
+
+    it('refuses a branch_admin relabelling a different branch’s account — the #138 escalation', async () => {
+      const scopeService = fakeScopeService({ actOnScopeFails: true });
+      const service = new SettlementAccountService(
+        fakePrisma() as never,
+        scopeService as never,
+        fakeGateway() as never,
+      );
+      const caller = callerWith('branch_admin', [
+        { scopeType: 'branch', scopeRefId: OTHER_BRANCH },
+      ]);
+
+      await expect(
+        service.update(CHURCH, ACCOUNT.id, caller, { label: 'New Label' }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(scopeService.assertCanActOnScope).toHaveBeenCalledWith(caller, {
+        scopeType: 'branch',
+        scopeRefId: BRANCH,
+      });
+    });
+
+    it('refuses a non-super_admin relabelling the church-wide account', async () => {
+      const prisma = fakePrisma();
+      const service = new SettlementAccountService(
+        prisma as never,
+        fakeScopeService() as never,
+        fakeGateway() as never,
+      );
+
+      await expect(
+        service.update(CHURCH, CHURCH_ACCOUNT.id, callerWith('finance'), { label: 'New Label' }),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

@@ -113,6 +113,68 @@ describe('Region (e2e)', () => {
     expect(res.body.message).toContain('branch');
   });
 
+  it('refuses to delete a region with a region-scoped settlement account, naming it in the message', async () => {
+    const { cookie, churchId, regionId } = await createAuthedChurchWithRegion(app);
+
+    await prisma.settlementAccount.create({
+      data: {
+        churchId,
+        scopeType: 'region',
+        scopeRefId: regionId,
+        label: 'Region account',
+        bankCode: '035',
+        bankName: 'Wema Bank',
+        accountNumberMasked: '****6789',
+        accountNumberHash: 'hash-region-block',
+        accountName: 'KORU Region',
+        providerSubaccountCode: 'ACCT_region_block',
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .delete(`/churches/${churchId}/regions/${regionId}`)
+      .set('Cookie', cookie)
+      .expect(409);
+
+    expect(res.body.message).toContain('settlement account');
+  });
+
+  it('refuses to delete a region with a region-scoped campaign, naming it in the message', async () => {
+    const { cookie, churchId, regionId } = await createAuthedChurchWithRegion(app);
+
+    const account = await prisma.settlementAccount.create({
+      data: {
+        churchId,
+        scopeType: 'church',
+        label: 'Church account',
+        bankCode: '035',
+        bankName: 'Wema Bank',
+        accountNumberMasked: '****1234',
+        accountNumberHash: 'hash-region-campaign-block',
+        accountName: 'KORU Church',
+        providerSubaccountCode: 'ACCT_region_campaign_block',
+      },
+    });
+
+    await prisma.campaign.create({
+      data: {
+        churchId,
+        title: 'Region campaign',
+        scopeType: 'region',
+        scopeRefId: regionId,
+        settlementAccountId: account.id,
+        targetAmountKobo: 100000,
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .delete(`/churches/${churchId}/regions/${regionId}`)
+      .set('Cookie', cookie)
+      .expect(409);
+
+    expect(res.body.message).toContain('campaign');
+  });
+
   it('isolates tenants: church B cannot see or touch church A regions', async () => {
     const alice = await createAuthedChurchWithRegion(app, { emailPrefix: 'alice' });
     const bob = await createAuthedChurch(app, { emailPrefix: 'bob' });

@@ -355,6 +355,16 @@ describe('PaystackAdapter', () => {
       expect(banks[0]?.code).toBe('058');
     });
 
+    it('requests Paystack’s real bank directory path, not the plural /banks', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { status: true, data: [bankRow()] }));
+
+      await adapter.listBanks();
+
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(url).toContain('/bank?');
+      expect(url).not.toContain('/banks');
+    });
+
     it('issues exactly one upstream request for two concurrent calls, and zero for a third inside the TTL', async () => {
       fetchMock.mockResolvedValue(jsonResponse(200, { status: true, data: [bankRow()] }));
 

@@ -136,7 +136,7 @@ export class StaffService {
     if (caller.role === 'super_admin') return;
 
     for (const scope of scopes) {
-      const covered = await this.scopeService.scopeCovers(caller.scopes, scope);
+      const covered = await this.scopeService.scopeCovers(caller.churchId, caller.scopes, scope);
       if (!covered) {
         throw new ForbiddenException(`A ${caller.role} cannot grant a scope outside their own`);
       }
@@ -181,7 +181,8 @@ export class StaffService {
     if (target.scopes.length === 0) return false;
 
     for (const scope of target.scopes) {
-      if (!(await this.scopeService.scopeCovers(caller.scopes, scope))) return false;
+      if (!(await this.scopeService.scopeCovers(caller.churchId, caller.scopes, scope)))
+        return false;
     }
     return true;
   }

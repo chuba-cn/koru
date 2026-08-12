@@ -45,3 +45,15 @@ deleting another person's account is irreversible and reaches outside the tenant
 attaching a `userId` column. This does not change the role/tier lines drawn above; it changes who may
 exercise the "admin-tier" staff-management capability that was previously reserved for
 `super_admin` by omission rather than by design.
+
+## Amendment: settlement accounts are no longer super_admin-only at every level
+
+The paragraph above states `SettlementAccountController` is deliberately `super_admin`-only,
+`finance` included, because bank details are the most sensitive data this API holds. That is no
+longer the whole picture. Registration is now delegated by scope level: a `regional_admin`,
+`branch_admin`, or `finance` officer may register a settlement account at the region or branch
+level their own `StaffScope` covers. Church-level registration stays `super_admin`-only, since a
+church-scoped account captures every church-wide campaign's giving and no scope check can narrow
+it. See [ADR-0020](0020-settlement-account-scope-and-delegated-registration.md) for the full
+reasoning, including why the underlying `branchId` foreign key was removed rather than kept and
+widened.

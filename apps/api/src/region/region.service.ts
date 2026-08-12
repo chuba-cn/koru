@@ -93,11 +93,23 @@ export class RegionService {
     await this.findById(churchId, id);
     await this.scopeService.assertCanActOnScope(caller, { scopeType: 'region', scopeRefId: id });
 
-    const branchCount = await this.prisma.branch.count({ where: { regionId: id } });
+    const [branchCount, campaignCount, accountCount] = await Promise.all([
+      this.prisma.branch.count({ where: { churchId, regionId: id } }),
+      this.prisma.campaign.count({ where: { churchId, scopeType: 'region', scopeRefId: id } }),
+      this.prisma.settlementAccount.count({
+        where: { churchId, scopeType: 'region', scopeRefId: id },
+      }),
+    ]);
 
-    if (branchCount > 0) {
+    const blockers = [
+      branchCount > 0 ? `${branchCount} branch(es)` : null,
+      campaignCount > 0 ? `${campaignCount} campaign(s)` : null,
+      accountCount > 0 ? `${accountCount} settlement account(s)` : null,
+    ].filter((blocker): blocker is string => blocker !== null);
+
+    if (blockers.length > 0) {
       throw new ConflictException(
-        `Region has ${branchCount} branch(es); move or delete them first`,
+        `Region still has ${blockers.join(', ')}; move or delete them first`,
       );
     }
 

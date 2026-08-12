@@ -28,7 +28,7 @@ async function seedGiving(
   title: string,
 ) {
   const account = await prisma.settlementAccount.create({
-    data: { churchId, label: `${title} account` },
+    data: { churchId, scopeType: 'church', label: `${title} account` },
   });
   const campaign = await prisma.campaign.create({
     data: {
@@ -237,7 +237,7 @@ describe('Member pledge history (e2e)', () => {
     const member = await joinChurch(app, church.churchId, ada.cookie, 'Ada Lovelace');
 
     const account = await prisma.settlementAccount.create({
-      data: { churchId: church.churchId, label: 'Walk account' },
+      data: { churchId: church.churchId, scopeType: 'church', label: 'Walk account' },
     });
     const campaign = await prisma.campaign.create({
       data: {

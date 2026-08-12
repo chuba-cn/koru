@@ -2,11 +2,14 @@ import { createHmac, randomUUID } from 'node:crypto';
 import type {
   CreateSettlementAccountInput,
   ListSettlementAccountsQuery,
+  ScopeLevel,
+  StaffRole,
   UpdateSettlementAccountInput,
 } from '@koru/shared';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -29,6 +32,17 @@ const publicShape = {
   omit: { providerSubaccountCode: true, accountNumberHash: true },
 } as const;
 
+const SCOPE_LEVEL_ROLES: Record<ScopeLevel, readonly StaffRole[]> = {
+  church: ['super_admin'],
+  region: ['super_admin', 'regional_admin', 'finance'],
+  branch: ['super_admin', 'regional_admin', 'branch_admin', 'finance'],
+};
+
+type AccountScope = {
+  scopeType: ScopeLevel;
+  scopeRefId: string | null;
+};
+
 @Injectable()
 export class SettlementAccountService {
   private readonly logger = new Logger(SettlementAccountService.name);
@@ -39,6 +53,13 @@ export class SettlementAccountService {
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
   ) {}
 
+  /**
+   * Asserts that a church exists in the database and returns its record.
+   *
+   * @param churchId - The ID of the church tenant
+   * @returns The Church entity record
+   * @throws NotFoundException if the church does not exist
+   */
   private async assertChurchExistsAndReturn(churchId: string) {
     const church = await this.prisma.church.findUnique({ where: { id: churchId } });
     if (!church) throw new NotFoundException(`Church ${churchId} not found`);
@@ -46,20 +67,93 @@ export class SettlementAccountService {
     return church;
   }
 
-  private async assertBranchInChurch(churchId: string, branchId: string) {
-    const branch = await this.prisma.branch.findFirst({ where: { id: branchId, churchId } });
-    if (!branch) {
-      throw new BadRequestException(
-        `branchId ${branchId} does not reference a branch of this church`,
+  /**
+   * Asserts that a caller has appropriate role privileges and domain scope authorization
+   * to manage a settlement account at the target scope level.
+   *
+   * Rules:
+   * - Validates caller role against `SCOPE_LEVEL_ROLES` for the target scope level.
+   * - For 'region' or 'branch' scopes, delegates to `ScopeService.assertCanActOnScope`.
+   *
+   * @param caller - The logged-in staff member initiating the action
+   * @param scope - The target account scope (`scopeType` and `scopeRefId`)
+   * @throws ForbiddenException if caller role or scope authority is insufficient
+   */
+  private async assertMayActOnScope(caller: TenantStaff, scope: AccountScope) {
+    if (!SCOPE_LEVEL_ROLES[scope.scopeType].includes(caller.role)) {
+      throw new ForbiddenException(
+        `A ${caller.role} cannot act on a ${scope.scopeType}-level settlement account`,
       );
     }
+
+    if (scope.scopeType === 'church') return;
+
+    await this.scopeService.assertCanActOnScope(caller, {
+      scopeType: scope.scopeType,
+      scopeRefId: scope.scopeRefId ?? '',
+    });
   }
 
-  async create(churchId: string, input: CreateSettlementAccountInput) {
+  /**
+   * Builds the Prisma `WHERE` query filter to restrict settlement account visibility based on caller scopes.
+   *
+   * Visibility Rules:
+   * - 'super_admin' sees all accounts across the church.
+   * - Delegated roles see church-level accounts, plus accounts matching their covered region/branch IDs.
+   *
+   * @param churchId - The tenant church ID
+   * @param caller - The logged-in staff member
+   * @returns Prisma WHERE filter input object for SettlementAccount queries
+   */
+  private async scopeWhere(
+    churchId: string,
+    caller: TenantStaff,
+  ): Promise<Prisma.SettlementAccountWhereInput> {
+    if (caller.role === 'super_admin') return {};
+
+    const [regionIds, branchIds] = await Promise.all([
+      this.scopeService.coveredRegionIds(churchId, caller),
+      this.scopeService.coveredBranchIds(churchId, caller),
+    ]);
+
+    return {
+      OR: [
+        { scopeType: 'church' },
+        { scopeType: 'region', scopeRefId: { in: regionIds } },
+        { scopeType: 'branch', scopeRefId: { in: branchIds } },
+      ],
+    };
+  }
+
+  /**
+   * Creates a new settlement bank account for payouts/donations and registers a subaccount with the payment gateway.
+   *
+   * Workflow:
+   * 1. Validates church existence, scope reference ID, and caller permission.
+   * 2. Checks for duplicate account hashes within the church.
+   * 3. Verifies bank code & resolves bank account name via payment gateway.
+   * 4. Provisions a subaccount with the payment gateway (e.g. Paystack).
+   * 5. Persists the settlement account record in the database.
+   *
+   * @param churchId - The tenant church ID
+   * @param caller - The staff member creating the account
+   * @param input - Account details including label, bankCode, accountNumber, scopeType, and scopeRefId
+   * @returns Created SettlementAccount record (excluding sensitive internal fields)
+   * @throws NotFoundException if church is not found
+   * @throws ForbiddenException if caller lacks scope authority
+   * @throws ConflictException if the bank account is already registered for this church
+   * @throws BadRequestException if bank code or account number is invalid
+   */
+  async create(churchId: string, caller: TenantStaff, input: CreateSettlementAccountInput) {
     const church = await this.assertChurchExistsAndReturn(churchId);
-    if (input.branchId) {
-      await this.assertBranchInChurch(churchId, input.branchId);
-    }
+
+    const scope: AccountScope = {
+      scopeType: input.scopeType,
+      scopeRefId: input.scopeRefId ?? null,
+    };
+
+    await this.scopeService.assertScopeRefInChurch(churchId, scope);
+    await this.assertMayActOnScope(caller, scope);
 
     const accountNumberHash = createHmac('sha256', SETTLEMENT_ACCOUNT_HASH_PEPPER)
       .update(input.accountNumber)
@@ -103,7 +197,8 @@ export class SettlementAccountService {
           id,
           churchId,
           label: input.label,
-          branchId: input.branchId ?? null,
+          scopeType: scope.scopeType,
+          scopeRefId: scope.scopeRefId,
           bankCode: bank.code,
           bankName: bank.name,
           accountName: resolved.accountName,
@@ -128,21 +223,27 @@ export class SettlementAccountService {
     }
   }
 
+  /**
+   * Retrieves a paginated list of settlement accounts visible to the caller within a church.
+   *
+   * Enforces cursor-based pagination and scope-based visibility filtering.
+   *
+   * @param churchId - The tenant church ID
+   * @param caller - The staff member making the query
+   * @param query - Pagination parameters (limit, cursor, direction) and optional scope filters
+   * @returns Paginated result containing settlement accounts and total count
+   * @throws NotFoundException if church does not exist
+   */
   async list(churchId: string, caller: TenantStaff, query: ListSettlementAccountsQuery) {
     await this.assertChurchExistsAndReturn(churchId);
 
-    const scopeWhere: Prisma.SettlementAccountWhereInput =
-      caller.role === 'super_admin'
-        ? {}
-        : {
-            OR: [
-              { branchId: { in: await this.scopeService.coveredBranchIds(churchId, caller) } },
-              { branchId: null },
-            ],
-          };
-
     const where: Prisma.SettlementAccountWhereInput = {
-      AND: [{ churchId }, scopeWhere, ...(query.branchId ? [{ branchId: query.branchId }] : [])],
+      AND: [
+        { churchId },
+        await this.scopeWhere(churchId, caller),
+        ...(query.scopeType ? [{ scopeType: query.scopeType }] : []),
+        ...(query.scopeRefId ? [{ scopeRefId: query.scopeRefId }] : []),
+      ],
     };
 
     assertValidDirection(query);
@@ -168,6 +269,14 @@ export class SettlementAccountService {
     return buildCursorPage(rows, totalCount, query);
   }
 
+  /**
+   * Retrieves a single settlement account by ID within a church.
+   *
+   * @param churchId - The tenant church ID
+   * @param id - The settlement account ID
+   * @returns The SettlementAccount record
+   * @throws NotFoundException if the account does not exist
+   */
   async findById(churchId: string, id: string) {
     const account = await this.prisma.settlementAccount.findFirst({
       where: { id, churchId },
@@ -178,15 +287,31 @@ export class SettlementAccountService {
   }
 
   /**
-   * Label-only, deliberately. Paystack has PUT /subaccount/{code}, and this
-   * does not call it. A stale business_name on Paystack's dashboard is
-   * cosmetic and affects no routing. Re-registering a settlement account
-   * with a different bank/account number is not built at all: doing so
-   * would need the plaintext account number again, which this service never
-   * stores.
+   * Updates the label of an existing settlement account.
+   *
+   * Note: Label-only update, deliberately. Paystack has PUT /subaccount/{code}, and this
+   * does not call it. A stale business_name on Paystack's dashboard is cosmetic and affects
+   * no routing. Re-registering a settlement account with a different bank/account number
+   * is not built at all: doing so would need the plaintext account number again, which this
+   * service never stores.
+   *
+   * @param churchId - The tenant church ID
+   * @param id - The settlement account ID
+   * @param caller - The staff member attempting the update
+   * @param input - The update payload containing the new label
+   * @returns Updated SettlementAccount record
+   * @throws NotFoundException if the account does not exist
+   * @throws ForbiddenException if caller lacks scope authority
    */
-  async update(churchId: string, id: string, input: UpdateSettlementAccountInput) {
-    await this.findById(churchId, id);
+  async update(
+    churchId: string,
+    id: string,
+    caller: TenantStaff,
+    input: UpdateSettlementAccountInput,
+  ) {
+    const account = await this.findById(churchId, id);
+    await this.assertMayActOnScope(caller, account);
+
     return this.prisma.settlementAccount.update({
       where: { id },
       data: { label: input.label },

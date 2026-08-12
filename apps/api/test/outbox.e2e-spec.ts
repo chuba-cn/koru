@@ -213,7 +213,7 @@ describe('Transactional outbox (e2e)', () => {
     const { churchId: otherChurchId } = await createAuthedChurch(app);
 
     const settlementAccount = await prisma.settlementAccount.create({
-      data: { churchId: otherChurchId, label: 'Other church main account' },
+      data: { churchId: otherChurchId, scopeType: 'church', label: 'Other church main account' },
     });
     const otherChurchCampaign = await prisma.campaign.create({
       data: {
