@@ -48,7 +48,7 @@ by definition. Loosen that one line and the rest of this design stops being safe
 The alternative to keeping `church` `super_admin`-only was adding a `church` value to `ScopeType`,
 the enum `StaffScope` rows use, so a church-wide `finance` officer could be represented directly.
 Considered and rejected, closed as
-[#140](https://github.com/koru-app/koru/issues/140): `scopeCovers` treats a covering scope as
+[#140](https://github.com/chuba-cn/koru/issues/140): `scopeCovers` treats a covering scope as
 authority over everything inside it, so a church-scoped `StaffScope` would hand a non-`super_admin`
 `regional_admin` church-wide reach through the exact same containment check that today correctly
 stops a branch scope from reaching its own region. `ScopeType` stays `{ region, branch }`. Anyone

@@ -117,7 +117,7 @@ guess, every time.
 
 ## Writing epics and tickets
 
-Issues live as GitHub issues (`gh` CLI, repo `koru-app/koru`). See `docs/agents/issue-tracker.md`.
+Issues live as GitHub issues (`gh` CLI, repo `chuba-cn/koru`). See `docs/agents/issue-tracker.md`.
 Triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`.
 
 **An epic** is a spec issue (labelled `spec`) holding the problem, the decisions, and the ticket

@@ -32,7 +32,7 @@ future ticket may need to drop or cache it if it becomes the bottleneck instead.
 scale — a single tenant with 30,000+
 members and 500+ branches — this is not a micro-optimization to defer; it is the difference between
 a list endpoint that stays fast as a roster grows and one that degrades with it. See
-[koru-app/koru#81](https://github.com/koru-app/koru/issues/81) for the full scoping and
+[chuba-cn/koru#81](https://github.com/chuba-cn/koru/issues/81) for the full scoping and
 `StaffService.list` (`apps/api/src/staff/staff.service.ts`) for the reference implementation.
 
 A future contributor should not "restore" the `{ data, meta }` shape to match this document's
