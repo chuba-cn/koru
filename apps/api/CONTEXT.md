@@ -18,6 +18,13 @@ or relabel it and who can see it at all.
 _Avoid_: Branch account, Account owner, Staff Scope (a Staff Scope is where a *person* may act; a
 Settlement Account Scope is where an *account* reaches)
 
+**Settlement Routing**:
+Which Settlement Account a Campaign's money lands in. Valid only when the account's Scope Level
+covers or equals the Campaign's — upward is allowed (a Branch Campaign may bank into its Region's
+or the Church's account), downward never is. Locked once the Campaign has any Payment, so a
+Campaign's history stays explainable.
+_Avoid_: Payout routing, Disbursement, Fulfilment (a Pledge is fulfilled; money is settled)
+
 **Subaccount**:
 The Paystack-side representation of a Settlement Account, used to route funds to it.
 _Avoid_: Split account

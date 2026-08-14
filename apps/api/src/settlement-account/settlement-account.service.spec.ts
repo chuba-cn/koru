@@ -69,6 +69,12 @@ function fakePrisma() {
         Promise.resolve({ ...ACCOUNT, ...data }),
       ),
     },
+    branch: {
+      findMany: vi.fn(() => Promise.resolve([] as { id: string }[])),
+    },
+    campaign: {
+      findMany: vi.fn(() => Promise.resolve([] as { title: string }[])),
+    },
   };
 }
 
@@ -677,7 +683,7 @@ describe('SettlementAccountService', () => {
   });
 
   describe('update', () => {
-    it('only ever changes the label, never the account number or scope', async () => {
+    it('changes only the label when scope is not sent', async () => {
       const prisma = fakePrisma();
       const service = new SettlementAccountService(
         prisma as never,
@@ -753,6 +759,216 @@ describe('SettlementAccountService', () => {
       await expect(
         service.update(CHURCH, CHURCH_ACCOUNT.id, callerWith('finance'), { label: 'New Label' }),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('moves an account to a new scope when nothing settles into it yet', async () => {
+      const prisma = fakePrisma();
+      const service = new SettlementAccountService(
+        prisma as never,
+        fakeScopeService() as never,
+        fakeGateway() as never,
+      );
+
+      await service.update(CHURCH, ACCOUNT.id, SUPER_ADMIN, {
+        scopeType: 'region',
+        scopeRefId: REGION,
+      });
+
+      expect(prisma.settlementAccount.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { scopeType: 'region', scopeRefId: REGION } }),
+      );
+    });
+
+    it('checks authority over both the current scope and the requested scope', async () => {
+      const scopeService = fakeScopeService();
+      const service = new SettlementAccountService(
+        fakePrisma() as never,
+        scopeService as never,
+        fakeGateway() as never,
+      );
+
+      await service.update(CHURCH, ACCOUNT.id, SUPER_ADMIN, {
+        scopeType: 'region',
+        scopeRefId: REGION,
+      });
+
+      expect(scopeService.assertCanActOnScope).toHaveBeenCalledWith(SUPER_ADMIN, {
+        scopeType: 'branch',
+        scopeRefId: BRANCH,
+      });
+      expect(scopeService.assertCanActOnScope).toHaveBeenCalledWith(SUPER_ADMIN, {
+        scopeType: 'region',
+        scopeRefId: REGION,
+      });
+    });
+
+    it('refuses a branch_admin re-scoping their own account up to a region they do not cover', async () => {
+      const scopeService = {
+        ...fakeScopeService(),
+        assertCanActOnScope: vi
+          .fn()
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(new ForbiddenException('cannot act on requested scope')),
+      };
+      const prisma = fakePrisma();
+      const service = new SettlementAccountService(
+        prisma as never,
+        scopeService as never,
+        fakeGateway() as never,
+      );
+      const caller = callerWith('branch_admin', [{ scopeType: 'branch', scopeRefId: BRANCH }]);
+
+      await expect(
+        service.update(CHURCH, ACCOUNT.id, caller, { scopeType: 'region', scopeRefId: REGION }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.settlementAccount.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a requested scopeRefId that does not name a region/branch of this church', async () => {
+      const scopeService = fakeScopeService({ scopeRefFails: true });
+      const prisma = fakePrisma();
+      const service = new SettlementAccountService(
+        prisma as never,
+        scopeService as never,
+        fakeGateway() as never,
+      );
+
+      await expect(
+        service.update(CHURCH, ACCOUNT.id, SUPER_ADMIN, {
+          scopeType: 'region',
+          scopeRefId: 'no-such-region',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.settlementAccount.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses to narrow scope down to a branch when a campaign settling into it is region-scoped', async () => {
+      const prisma = fakePrisma();
+      prisma.campaign.findMany.mockResolvedValueOnce([{ title: 'Building Fund' }]);
+      const service = new SettlementAccountService(
+        prisma as never,
+        fakeScopeService() as never,
+        fakeGateway() as never,
+      );
+
+      await expect(
+        service.update(CHURCH, CHURCH_ACCOUNT.id, SUPER_ADMIN, {
+          scopeType: 'branch',
+          scopeRefId: BRANCH,
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(prisma.settlementAccount.update).not.toHaveBeenCalled();
+    });
+
+    it('names every orphaned campaign in the conflict message', async () => {
+      const prisma = fakePrisma();
+      prisma.campaign.findMany.mockResolvedValueOnce([
+        { title: 'Building Fund' },
+        { title: 'Youth Camp' },
+      ]);
+      const service = new SettlementAccountService(
+        prisma as never,
+        fakeScopeService() as never,
+        fakeGateway() as never,
+      );
+
+      await expect(
+        service.update(CHURCH, CHURCH_ACCOUNT.id, SUPER_ADMIN, {
+          scopeType: 'branch',
+          scopeRefId: BRANCH,
+        }),
+      ).rejects.toThrow(/Building Fund.*Youth Camp/);
+    });
+
+    it('allows re-scoping to church, where no campaign can ever be orphaned', async () => {
+      const prisma = fakePrisma();
+      const service = new SettlementAccountService(
+        prisma as never,
+        fakeScopeService() as never,
+        fakeGateway() as never,
+      );
+
+      await service.update(CHURCH, ACCOUNT.id, SUPER_ADMIN, {
+        scopeType: 'church',
+        scopeRefId: null,
+      });
+
+      expect(prisma.campaign.findMany).not.toHaveBeenCalled();
+      expect(prisma.settlementAccount.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { scopeType: 'church', scopeRefId: null } }),
+      );
+    });
+
+    it('narrowing to a branch checks orphans against exactly that branch, matching covers', async () => {
+      const prisma = fakePrisma();
+      const service = new SettlementAccountService(
+        prisma as never,
+        fakeScopeService() as never,
+        fakeGateway() as never,
+      );
+
+      await service.update(CHURCH, CHURCH_ACCOUNT.id, SUPER_ADMIN, {
+        scopeType: 'branch',
+        scopeRefId: BRANCH,
+      });
+
+      expect(prisma.campaign.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            NOT: { scopeType: 'branch', scopeRefId: BRANCH },
+          }),
+        }),
+      );
+    });
+
+    it('narrowing to a region checks orphans against that region and every branch inside it, matching covers', async () => {
+      const prisma = fakePrisma();
+      prisma.branch.findMany.mockResolvedValueOnce([{ id: BRANCH }, { id: OTHER_BRANCH }]);
+      const service = new SettlementAccountService(
+        prisma as never,
+        fakeScopeService() as never,
+        fakeGateway() as never,
+      );
+
+      await service.update(CHURCH, CHURCH_ACCOUNT.id, SUPER_ADMIN, {
+        scopeType: 'region',
+        scopeRefId: REGION,
+      });
+
+      expect(prisma.branch.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ churchId: CHURCH, regionId: REGION }),
+        }),
+      );
+      expect(prisma.campaign.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            NOT: {
+              OR: [
+                { scopeType: 'region', scopeRefId: REGION },
+                { scopeType: 'branch', scopeRefId: { in: [BRANCH, OTHER_BRANCH] } },
+              ],
+            },
+          }),
+        }),
+      );
+    });
+
+    it('never touches Paystack on a scope-only update', async () => {
+      const gateway = fakeGateway();
+      const service = new SettlementAccountService(
+        fakePrisma() as never,
+        fakeScopeService() as never,
+        gateway as never,
+      );
+
+      await service.update(CHURCH, ACCOUNT.id, SUPER_ADMIN, {
+        scopeType: 'region',
+        scopeRefId: REGION,
+      });
+
+      expect(gateway.createSubaccount).not.toHaveBeenCalled();
+      expect(gateway.resolveAccountNumber).not.toHaveBeenCalled();
     });
   });
 });

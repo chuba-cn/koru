@@ -627,6 +627,99 @@ describe('Settlement accounts (e2e)', () => {
         .send({ label: 'Renamed' })
         .expect(403);
     });
+
+    it('moves an account from branch to region scope when a super_admin asks', async () => {
+      const alice = await createAuthedChurch(app);
+      const region = await createRegion(app, alice.churchId, alice.cookie);
+      const branch = await createBranch(app, alice.churchId, alice.cookie, 'Branch', region.id);
+
+      const acct = await request(app.getHttpServer())
+        .post(`/churches/${alice.churchId}/settlement-accounts`)
+        .set('Cookie', alice.cookie)
+        .send({
+          label: 'Branch Account',
+          accountNumber: freshAccountNumber(),
+          bankCode: '058',
+          scopeType: 'branch',
+          scopeRefId: branch.id,
+        })
+        .expect(201);
+
+      const updated = await request(app.getHttpServer())
+        .patch(`/churches/${alice.churchId}/settlement-accounts/${acct.body.id}`)
+        .set('Cookie', alice.cookie)
+        .send({ scopeType: 'region', scopeRefId: region.id })
+        .expect(200);
+
+      expect(updated.body.scopeType).toBe('region');
+      expect(updated.body.scopeRefId).toBe(region.id);
+    });
+
+    it('refuses a branch_admin re-scoping their own account up to a region they do not cover', async () => {
+      const alice = await createAuthedChurch(app);
+      const region = await createRegion(app, alice.churchId, alice.cookie);
+      const branch = await createBranch(app, alice.churchId, alice.cookie, 'Branch', region.id);
+
+      const acct = await request(app.getHttpServer())
+        .post(`/churches/${alice.churchId}/settlement-accounts`)
+        .set('Cookie', alice.cookie)
+        .send({
+          label: 'Branch Account',
+          accountNumber: freshAccountNumber(),
+          bankCode: '058',
+          scopeType: 'branch',
+          scopeRefId: branch.id,
+        })
+        .expect(201);
+
+      await setStaffScope(prisma, alice.staffId, 'branch_admin', [
+        { scopeType: 'branch', scopeRefId: branch.id },
+      ]);
+
+      await request(app.getHttpServer())
+        .patch(`/churches/${alice.churchId}/settlement-accounts/${acct.body.id}`)
+        .set('Cookie', alice.cookie)
+        .send({ scopeType: 'region', scopeRefId: region.id })
+        .expect(403);
+    });
+
+    it('refuses to narrow an account down to a branch when a campaign settling into it is region-scoped', async () => {
+      const alice = await createAuthedChurch(app);
+      const region = await createRegion(app, alice.churchId, alice.cookie);
+      const branch = await createBranch(app, alice.churchId, alice.cookie, 'Branch', region.id);
+
+      const acct = await request(app.getHttpServer())
+        .post(`/churches/${alice.churchId}/settlement-accounts`)
+        .set('Cookie', alice.cookie)
+        .send({
+          label: 'Region Account',
+          accountNumber: freshAccountNumber(),
+          bankCode: '058',
+          scopeType: 'region',
+          scopeRefId: region.id,
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post(`/churches/${alice.churchId}/campaigns`)
+        .set('Cookie', alice.cookie)
+        .send({
+          title: 'Region Campaign',
+          scopeType: 'region',
+          scopeRefId: region.id,
+          settlementAccountId: acct.body.id,
+          targetAmountKobo: 500000,
+        })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .patch(`/churches/${alice.churchId}/settlement-accounts/${acct.body.id}`)
+        .set('Cookie', alice.cookie)
+        .send({ scopeType: 'branch', scopeRefId: branch.id })
+        .expect(409);
+
+      expect(res.body.message).toContain('Region Campaign');
+    });
   });
 
   describe('tenant isolation', () => {

@@ -287,21 +287,74 @@ export class SettlementAccountService {
   }
 
   /**
-   * Updates the label of an existing settlement account.
+   * Asserts that updating an account's scope will not orphan any active campaigns linked to it.
    *
-   * Note: Label-only update, deliberately. Paystack has PUT /subaccount/{code}, and this
-   * does not call it. A stale business_name on Paystack's dashboard is cosmetic and affects
-   * no routing. Re-registering a settlement account with a different bank/account number
-   * is not built at all: doing so would need the plaintext account number again, which this
-   * service never stores.
+   * Expressed as a negated Prisma query for efficiency rather than looping over `ScopeService.covers`.
+   * Must remain equivalent to `covers(newScope, campaignScope)`.
+   *
+   * @param churchId - The tenant church ID
+   * @param accountId - The settlement account ID being updated
+   * @param next - The proposed new account scope
+   * @throws ConflictException if any existing campaigns linked to this account are no longer covered by `next` scope
+   */
+  private async assertCampaignsStillCovered(
+    churchId: string,
+    accountId: string,
+    next: AccountScope,
+  ) {
+    if (next.scopeType === 'church') return;
+
+    let stillCovered: Prisma.CampaignWhereInput;
+
+    if (next.scopeType === 'region') {
+      const branches = await this.prisma.branch.findMany({
+        where: { churchId, regionId: next.scopeRefId ?? '' },
+        select: { id: true },
+      });
+
+      stillCovered = {
+        OR: [
+          { scopeType: 'region', scopeRefId: next.scopeRefId },
+          { scopeType: 'branch', scopeRefId: { in: branches.map((branch) => branch.id) } },
+        ],
+      };
+    } else {
+      stillCovered = { scopeType: 'branch', scopeRefId: next.scopeRefId };
+    }
+
+    const orphaned = await this.prisma.campaign.findMany({
+      where: { churchId, settlementAccountId: accountId, NOT: stillCovered },
+      select: { title: true },
+      take: 5,
+    });
+
+    if (orphaned.length > 0) {
+      throw new ConflictException(
+        `Re-scoping this account to ${next.scopeType} level would leave campaigns settling into an account that no longer covers them: ${orphaned
+          .map((campaign) => `"${campaign.title}"`)
+          .join(', ')}`,
+      );
+    }
+  }
+
+  /**
+   * Updates an existing settlement account's label or scope (`scopeType`, `scopeRefId`).
+   *
+   * Rules & Constraints:
+   * - Caller must have administrative permissions over both the current scope and any newly requested scope.
+   * - Changing scope validates that target scope reference exists within the church.
+   * - Scope changes ensure all campaigns currently settling into this account remain fully covered by the new scope.
+   * - Note: Re-registering with a different bank or account number is not supported because plaintext account numbers are never stored.
    *
    * @param churchId - The tenant church ID
    * @param id - The settlement account ID
    * @param caller - The staff member attempting the update
-   * @param input - The update payload containing the new label
-   * @returns Updated SettlementAccount record
-   * @throws NotFoundException if the account does not exist
-   * @throws ForbiddenException if caller lacks scope authority
+   * @param input - The update payload containing optional new label, scopeType, and scopeRefId
+   * @returns Updated SettlementAccount record (excluding sensitive internal fields)
+   * @throws NotFoundException if the account is not found
+   * @throws ForbiddenException if caller lacks scope authority on current or requested scope
+   * @throws ConflictException if re-scoping leaves existing linked campaigns uncovered
+   * @throws BadRequestException if scope reference validation fails
    */
   async update(
     churchId: string,
@@ -312,9 +365,29 @@ export class SettlementAccountService {
     const account = await this.findById(churchId, id);
     await this.assertMayActOnScope(caller, account);
 
+    const requested: AccountScope | null =
+      input.scopeType === undefined
+        ? null
+        : { scopeType: input.scopeType, scopeRefId: input.scopeRefId ?? null };
+
+    const scopeChanging =
+      requested !== null &&
+      (requested.scopeType !== account.scopeType || requested.scopeRefId !== account.scopeRefId);
+
+    if (scopeChanging && requested) {
+      await this.scopeService.assertScopeRefInChurch(churchId, requested);
+      await this.assertMayActOnScope(caller, requested);
+      await this.assertCampaignsStillCovered(churchId, id, requested);
+    }
+
     return this.prisma.settlementAccount.update({
       where: { id },
-      data: { label: input.label },
+      data: {
+        ...(input.label !== undefined ? { label: input.label } : {}),
+        ...(scopeChanging && requested
+          ? { scopeType: requested.scopeType, scopeRefId: requested.scopeRefId }
+          : {}),
+      },
       ...publicShape,
     });
   }

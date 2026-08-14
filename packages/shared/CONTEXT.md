@@ -44,7 +44,8 @@ _Avoid_: Scope Level (a Scope Level is where a *resource* reaches; a Staff Scope
 ### Giving
 
 **Campaign**:
-A fundraising effort with a monetary target and a Scope Level, that Members give toward.
+A fundraising effort with a monetary target and a Scope Level, that Members give toward. Names the
+Settlement Account its giving lands in; its Scope Level is fixed once giving exists.
 _Avoid_: Project, Fund, Appeal, Drive
 
 **Pledge**:

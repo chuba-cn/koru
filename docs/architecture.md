@@ -160,8 +160,12 @@ graph LR
         join["member (/join)"]
     end
 
-    subgraph admin["TenantGuard + super_admin<br/><i>GET also admitted for regional_admin/branch_admin/finance,<br/>scope-narrowed — create/update stay super_admin-only</i>"]
+    subgraph admin["TenantGuard + super_admin/regional_admin/branch_admin/finance at the class level<br/><i>create/update narrowed further per scope level inside the service —<br/>a church-level account or campaign stays super_admin-only</i>"]
         settlement["settlement-account"]
+    end
+
+    subgraph campaignZone["TenantGuard only at the class level<br/><i>GET open to any tenant-matched role;<br/>create/update need the same four admin-tier roles as settlement-account</i>"]
+        campaign["campaign"]
     end
 
     subgraph delegated["TenantGuard + super_admin<br/><i>regional_admin/branch_admin also admitted,<br/>capped by tier + own scope —<br/>except clear-login, which stays super_admin-only</i>"]
@@ -215,6 +219,7 @@ graph LR
 | `staff` (accept) | `POST /invites/accept` | **Public** — the token is the credential |
 | `settlement-account` | CRUD under `/churches/:churchId/settlement-accounts` | Tenant + `super_admin`/`regional_admin`/`branch_admin`/`finance` at the class level (see [`settlement-account.controller.spec.ts`](../apps/api/src/settlement-account/settlement-account.controller.spec.ts)); `create`/`update` are then narrowed per scope level by `SettlementAccountService`'s `SCOPE_LEVEL_ROLES` — a church-wide account stays `super_admin`-only, region/branch accounts also admit a caller whose own scope covers the target (`ScopeService.assertCanActOnScope`); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed (a delegated caller's own branch(es), their containing region(s), plus any church-wide account — see [below](#scoping-a-mutation-is-not-the-same-check-as-scoping-a-list) for why list-visibility resolves upward but authority never does); registering an account calls Paystack (bank lookup, name-enquiry, subaccount creation) only after both the scope-membership check (`ScopeService.assertScopeRefInChurch`) and the authority check pass — see [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md) and [ADR-0020](../apps/api/docs/adr/0020-settlement-account-scope-and-delegated-registration.md) |
 | `settlement-account` (banks) | `GET /banks` | Session only — the Nigerian bank directory is the same for every church, so this is deliberately not nested under a church |
+| `campaign` | CRUD under `/churches/:churchId/campaigns` | Tenant; class carries no `@StaffRoles`, so `GET` (list, read) is open to any tenant-matched staff role; `POST`/`PATCH` carry `@StaffRoles('super_admin', 'regional_admin', 'branch_admin', 'finance')` at the method level, then `CampaignService`'s own `CAMPAIGN_SCOPE_LEVEL_ROLES` narrows further per scope level, same shape as `settlement-account`; a campaign's settlement account must have a scope that `ScopeService.covers` its own (upward allowed, downward or sideways rejected); `GET` is [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) and scope-narrowed the same way as `settlement-account`; `settlementAccountId` and `scopeType`/`scopeRefId` both lock once giving exists — see [Campaign scope and settlement routing](./architecture/campaign-scope-and-settlement-routing.md) and [ADR-0021](../apps/api/docs/adr/0021-campaign-settlement-routing-and-repoint-lockout.md) |
 | `payments` (donations) | `POST /me/churches/:churchId/donations` | Session + `VerifiedPhoneGuard`; **not rate limited** (#115 not built) — see [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md) for the accepted-gap statement and its mitigations |
 | `payments` (webhook) | `POST /webhooks/paystack` | **Public** — trust comes from a verified HMAC signature, not a session; excluded from Swagger |
 | `member` | `GET /me`, `GET /me/churches/:churchId/{pledges,payments}` | Session only — own giving, filtered by session `userId`, never a guard; all three lists are [cursor-paginated](#paginated-lists-are-cursor-based-not-offset-based) |
@@ -317,6 +322,16 @@ branch into a region they do not control. `finance` was deliberately dropped fro
 mutation (`POST`/`PATCH`/`DELETE`) on both controllers — seeing the org structure is a finance
 concern (`list`), editing it is not.
 
+`Campaign` is `covers`' second consumer: `CampaignService.assertAccountCoversCampaign` calls
+`covers(churchId, account, campaign)` — **the account is `outer`, the campaign is `inner`**, since
+the question being asked is "does the account's reach contain the campaign's," not the other way
+round. Reversing that argument order silently inverts the rule into permitting the exact misroute
+it exists to stop — see
+[Campaign scope and settlement routing](./architecture/campaign-scope-and-settlement-routing.md)
+and [ADR-0021](../apps/api/docs/adr/0021-campaign-settlement-routing-and-repoint-lockout.md) for
+the full reasoning. `BranchService.update`'s two-sided authority check above is also the pattern
+`CampaignService.update` and `SettlementAccountService.update` follow for their own scope changes.
+
 ### Money is always integer Kobo
 
 Never a float, never an ambiguous "amount". This is [ADR-0003](./adr/0003-money-as-integer-kobo.md) and it is not negotiable. Money columns are `BigInt` in Postgres (for headroom beyond a 32-bit `Int`), which `JSON.stringify` cannot serialize — every service returning a money field converts it with `bigintToKobo` from `packages/shared` before it reaches a controller. Never invent a second conversion path.
@@ -396,6 +411,7 @@ Deep-dive documents for flows too involved to describe here:
 - [Email queue and delivery logging](./architecture/email-queue-and-logging.md) — how `MailService`/`EmailProcessor` send email through a durable BullMQ queue instead of inline, how retry/backoff and dead-lettering work, how the three interchangeable senders (Resend/SMTP/Console) are chosen, how the Resend webhook advances a log past `sent` to `delivered`/`bounced`/`complained`/`failed`, and how staff list and resend a church's send history.
 - [Transactional outbox and relay](./architecture/transactional-outbox-and-relay.md) — how `LedgerService.post` and `OutboxService.record` share one Postgres transaction so a ledger entry and its event commit atomically, how the relay's claim/enqueue/mark sequence uses `FOR UPDATE SKIP LOCKED` to let replicas run concurrently, and why the ordering is publish-then-mark, not the reverse.
 - [Paystack Pay-with-Transfer giving](./architecture/paystack-pay-with-transfer.md) — how a member's donation becomes a virtual account, a verified charge, and a ledger posting behind the `PaymentGateway` port; why the webhook is a trigger and never a fact; how an unpaid virtual account's expiry is detected when Paystack sends no failure webhook at all; and the accepted, time-boxed gap around rate limiting.
+- [Campaign scope and settlement routing](./architecture/campaign-scope-and-settlement-routing.md) — how `covers` decides whether a Campaign's settlement account can actually receive its giving, why the repoint and scope lockouts block on different things, and how the settlement attribution join answers "how much did this branch raise into its own account."
 
 ---
 

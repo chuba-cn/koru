@@ -108,19 +108,25 @@ export class SettlementAccountController {
 
   @Patch(':id')
   @ApiOperation({
-    summary: 'Update a settlement account label',
+    summary: "Update a settlement account's label or scope",
     description:
-      "Authorized against the account's own scope level, not the request body. The body cannot change an account's scope",
+      "Authorized against the account's own stored scope, and against the requested scope as well when the scope changes, a caller needs authority over both sides of a move. Re-scoping does not touch the Paystack subaccount: scope decides who may manage and see the account, never where money lands",
   })
   @ApiOkResponse({ type: SettlementAccountDto })
   @ApiNotFoundResponse({ description: 'Church or account not found', type: ErrorResponseDto })
   @ApiBadRequestResponse({
-    description: 'Validation failed or malformed UUID',
+    description:
+      'Validation failed, malformed UUID, or scopeRefId not a region/branch of this church',
     type: ErrorResponseDto,
   })
   @ApiForbiddenResponse({
     description:
-      "Church does not belong to the session, or the caller may not act on this account's scope",
+      "Church does not belong to the session, or the caller may not act on this account's current or requested scope",
+    type: ErrorResponseDto,
+  })
+  @ApiConflictResponse({
+    description:
+      'The new scope would no longer cover one or more campaigns settling into this account',
     type: ErrorResponseDto,
   })
   update(
