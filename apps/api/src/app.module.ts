@@ -4,6 +4,7 @@ import { AuthModule } from '@thallesp/nestjs-better-auth';
 import { auth } from './auth/auth';
 import { AuthPrismaLifecycle } from './auth/auth-prisma-lifecycle.service';
 import { BranchModule } from './branch/branch.module';
+import { CampaignModule } from './campaign/campaign.module';
 import { ChurchModule } from './church/church.module';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { EventsModule } from './events/events.module';
@@ -21,6 +22,7 @@ import { StaffModule } from './staff/staff.module';
 
 @Module({
   imports: [
+    CampaignModule,
     HealthModule,
     PrismaModule,
     QueueModule,

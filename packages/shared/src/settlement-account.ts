@@ -10,9 +10,25 @@ export const CreateSettlementAccountSchema = ScopeRefSchema.extend({
   bankCode: z.string().min(1).max(20),
 });
 
-export const UpdateSettlementAccountSchema = z.object({
-  label: z.string().min(2).max(120),
-});
+export const UpdateSettlementAccountSchema = z
+  .object({
+    label: z.string().min(2).max(120).optional(),
+    scopeType: ScopeLevelSchema.optional(),
+    scopeRefId: z.uuid().nullable().optional(),
+  })
+  .refine((input) => Object.keys(input).length > 0, {
+    message: 'Send at least one field to update',
+  })
+  .refine((input) => (input.scopeType === undefined) === (input.scopeRefId === undefined), {
+    message:
+      'Send scopeType and scopeRefId together. scopeRefId must be null for a church scope, and a uuid for a region or branch',
+  })
+  .refine(
+    (input) =>
+      input.scopeType === undefined ||
+      (input.scopeType === 'church') === (input.scopeRefId == null),
+    { message: 'scopeRefId must be null for a church scope, and a uuid for a region or branch' },
+  );
 
 export const ListSettlementAccountsQuerySchema = PaginationQuerySchema.extend({
   scopeType: ScopeLevelSchema.optional(),
