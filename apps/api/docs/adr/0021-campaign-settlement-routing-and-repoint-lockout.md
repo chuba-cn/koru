@@ -29,6 +29,35 @@ Upward is a legitimate arrangement: "the branch runs the campaign, head office b
 is not: a church-wide campaign settling into one branch's account means every branch's members give
 and one branch's bank account receives, with nothing anywhere recording that as unusual.
 
+## A fourth mutation path can break the rule: moving a branch
+
+`CampaignService` and `SettlementAccountService` both refuse to let a scope change break `covers`.
+There is a third way to break it that belongs to neither service: `BranchService.update` moving a
+branch to a different region. A branch-scoped campaign settling upward into its containing region's
+account — the "branch runs it, HQ banks it" case this ADR spends a whole section justifying — stops
+being covered the moment its branch moves to a different region, with nothing in the branch-move
+request mentioning campaigns at all. Once the campaign has a settled `Payment`, both lockouts above
+then make it unrepairable through the campaign API in either direction.
+
+`BranchService.update` now runs the mirror check, `assertCampaignsStillCoveredAfterMove`: any
+campaign scoped to the branch being moved, whose settlement account is region-scoped, is checked
+against the branch's *new* region before the move is allowed. A campaign settling into a
+church-wide or the branch's own account is unaffected and never blocks the move — only a
+region-scoped account tied to the branch's *old* region does.
+
+## Why the checks re-verify inside the write's own transaction
+
+Each of the three checks above — the campaign lockouts, the account's orphan check, and the
+branch-move check — first runs as an early, friendly check that produces a clear error message
+before any other work happens. But a count read that way is a fact about the database a moment
+*before* the write, not at the moment of the write. In the gap between them, a `Payment` could
+settle, or a campaign could be repointed, invalidating the count that was just read. `CampaignService.update`
+and `SettlementAccountService.update` both re-run their decisive count one more time, inside the
+same `prisma.$transaction` as the write itself, so the two can never disagree — the transaction
+commits with the same state it checked, or the check fails and nothing is written. This is
+deliberately narrower than serializable isolation; it closes the specific gap between "we decided
+to write" and "we wrote," not every theoretically possible interleaving.
+
 ## Why there is no separate authority check on the account
 
 A reader will expect `assertAccountCoversCampaign` to also check that the caller has authority over

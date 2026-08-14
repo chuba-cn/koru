@@ -295,19 +295,21 @@ export class SettlementAccountService {
    * @param churchId - The tenant church ID
    * @param accountId - The settlement account ID being updated
    * @param next - The proposed new account scope
+   * @param client - The Prisma service or transaction client executing the query (defaults to `this.prisma`)
    * @throws ConflictException if any existing campaigns linked to this account are no longer covered by `next` scope
    */
   private async assertCampaignsStillCovered(
     churchId: string,
     accountId: string,
     next: AccountScope,
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
   ) {
     if (next.scopeType === 'church') return;
 
     let stillCovered: Prisma.CampaignWhereInput;
 
     if (next.scopeType === 'region') {
-      const branches = await this.prisma.branch.findMany({
+      const branches = await client.branch.findMany({
         where: { churchId, regionId: next.scopeRefId ?? '' },
         select: { id: true },
       });
@@ -322,19 +324,21 @@ export class SettlementAccountService {
       stillCovered = { scopeType: 'branch', scopeRefId: next.scopeRefId };
     }
 
-    const orphaned = await this.prisma.campaign.findMany({
-      where: { churchId, settlementAccountId: accountId, NOT: stillCovered },
-      select: { title: true },
-      take: 5,
-    });
+    const where: Prisma.CampaignWhereInput = {
+      churchId,
+      settlementAccountId: accountId,
+      NOT: stillCovered,
+    };
+    const total = await client.campaign.count({ where });
+    if (total === 0) return;
 
-    if (orphaned.length > 0) {
-      throw new ConflictException(
-        `Re-scoping this account to ${next.scopeType} level would leave campaigns settling into an account that no longer covers them: ${orphaned
-          .map((campaign) => `"${campaign.title}"`)
-          .join(', ')}`,
-      );
-    }
+    const orphaned = await client.campaign.findMany({ where, select: { title: true }, take: 5 });
+    const names = orphaned.map((campaign) => `"${campaign.title}"`).join(', ');
+    const remainder = total > orphaned.length ? `, and ${total - orphaned.length} more` : '';
+
+    throw new ConflictException(
+      `Re-scoping this account to ${next.scopeType} level would leave campaigns settling into an account that no longer covers them: ${names}${remainder}`,
+    );
   }
 
   /**
@@ -344,6 +348,7 @@ export class SettlementAccountService {
    * - Caller must have administrative permissions over both the current scope and any newly requested scope.
    * - Changing scope validates that target scope reference exists within the church.
    * - Scope changes ensure all campaigns currently settling into this account remain fully covered by the new scope.
+   * - Re-verifies campaign scope coverage inside an interactive transaction (`$transaction`) alongside the update to prevent race conditions.
    * - Note: Re-registering with a different bank or account number is not supported because plaintext account numbers are never stored.
    *
    * @param churchId - The tenant church ID
@@ -380,15 +385,25 @@ export class SettlementAccountService {
       await this.assertCampaignsStillCovered(churchId, id, requested);
     }
 
-    return this.prisma.settlementAccount.update({
-      where: { id },
-      data: {
-        ...(input.label !== undefined ? { label: input.label } : {}),
-        ...(scopeChanging && requested
-          ? { scopeType: requested.scopeType, scopeRefId: requested.scopeRefId }
-          : {}),
-      },
-      ...publicShape,
+    // The check above is an early, friendly one, a Campaign could still be
+    // repointed onto this account in the gap between that check and this write.
+    // Re-verify inside the same transaction as the write, same reasoning as
+    // CampaignService.update's own re-check.
+    return this.prisma.$transaction(async (tx) => {
+      if (scopeChanging && requested) {
+        await this.assertCampaignsStillCovered(churchId, id, requested, tx);
+      }
+
+      return tx.settlementAccount.update({
+        where: { id },
+        data: {
+          ...(input.label !== undefined ? { label: input.label } : {}),
+          ...(scopeChanging && requested
+            ? { scopeType: requested.scopeType, scopeRefId: requested.scopeRefId }
+            : {}),
+        },
+        ...publicShape,
+      });
     });
   }
 }

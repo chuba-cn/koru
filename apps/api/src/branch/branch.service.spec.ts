@@ -41,6 +41,16 @@ function fakePrisma() {
         Promise.resolve({ ...BRANCH, ...data }),
       ),
     },
+    campaign: {
+      findMany: vi.fn(() =>
+        Promise.resolve(
+          [] as {
+            title: string;
+            settlementAccount: { scopeType: string; scopeRefId: string | null };
+          }[],
+        ),
+      ),
+    },
   };
 }
 
@@ -258,6 +268,71 @@ describe('BranchService', () => {
       });
 
       expect(result.name).toBe('New Name');
+    });
+
+    it('refuses to move a branch out of a region whose account still settles a campaign scoped to it', async () => {
+      const prisma = fakePrisma();
+      prisma.campaign.findMany.mockResolvedValueOnce([
+        { title: 'Roof Fund', settlementAccount: { scopeType: 'region', scopeRefId: REGION } },
+      ]);
+      const service = new BranchService(prisma as never, fakeScopeService() as never);
+
+      await expect(
+        service.update(CHURCH, BRANCH.id, callerWith('super_admin'), { regionId: OTHER_REGION }),
+      ).rejects.toThrow(ConflictException);
+      expect(prisma.branch.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses to detach a branch (regionId: null) from a region whose account still settles a campaign scoped to it', async () => {
+      const prisma = fakePrisma();
+      prisma.campaign.findMany.mockResolvedValueOnce([
+        { title: 'Roof Fund', settlementAccount: { scopeType: 'region', scopeRefId: REGION } },
+      ]);
+      const service = new BranchService(prisma as never, fakeScopeService() as never);
+
+      await expect(
+        service.update(CHURCH, BRANCH.id, callerWith('super_admin'), { regionId: null }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('allows the move when the campaign settles into a church-wide or branch-scoped account instead', async () => {
+      const prisma = fakePrisma();
+      prisma.campaign.findMany.mockResolvedValueOnce([
+        { title: 'Church Campaign', settlementAccount: { scopeType: 'church', scopeRefId: null } },
+        {
+          title: 'Own Branch Campaign',
+          settlementAccount: { scopeType: 'branch', scopeRefId: BRANCH.id },
+        },
+      ]);
+      const service = new BranchService(prisma as never, fakeScopeService() as never);
+
+      await expect(
+        service.update(CHURCH, BRANCH.id, callerWith('super_admin'), { regionId: OTHER_REGION }),
+      ).resolves.toBeDefined();
+    });
+
+    it("allows the move when the destination region is the account's own scope", async () => {
+      const prisma = fakePrisma();
+      prisma.campaign.findMany.mockResolvedValueOnce([
+        {
+          title: 'Moving With It',
+          settlementAccount: { scopeType: 'region', scopeRefId: OTHER_REGION },
+        },
+      ]);
+      const service = new BranchService(prisma as never, fakeScopeService() as never);
+
+      await expect(
+        service.update(CHURCH, BRANCH.id, callerWith('super_admin'), { regionId: OTHER_REGION }),
+      ).resolves.toBeDefined();
+    });
+
+    it('does not check campaigns at all when regionId is not part of the update', async () => {
+      const prisma = fakePrisma();
+      const service = new BranchService(prisma as never, fakeScopeService() as never);
+
+      await service.update(CHURCH, BRANCH.id, callerWith('super_admin'), { name: 'Renamed' });
+
+      expect(prisma.campaign.findMany).not.toHaveBeenCalled();
     });
   });
 

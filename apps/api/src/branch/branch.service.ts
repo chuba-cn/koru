@@ -37,6 +37,50 @@ export class BranchService {
     }
   }
 
+  /**
+   * Asserts that moving a branch to a new region (or detaching it from a region) will not orphan
+   * any branch-scoped campaigns whose settlement accounts are tied to the branch's current region.
+   *
+   * Background:
+   * A region-scoped settlement account covers all branches within that region. If a branch-scoped
+   * campaign points to a region-level settlement account, re-assigning the branch to a different
+   * region would break `ScopeService.covers(account, campaign)`, leaving the campaign settling into
+   * an account that no longer covers its branch.
+   *
+   * @param churchId - The tenant church ID
+   * @param branchId - The ID of the branch being moved
+   * @param nextRegionId - The target region ID (or `null` if detaching from a region)
+   * @throws ConflictException if any branch-level campaign is linked to a region-level settlement account
+   *                         that does not match `nextRegionId`
+   */
+  private async assertCampaignsStillCoveredAfterMove(
+    churchId: string,
+    branchId: string,
+    nextRegionId: string | null,
+  ) {
+    const campaigns = await this.prisma.campaign.findMany({
+      where: { churchId, scopeType: 'branch', scopeRefId: branchId },
+      select: {
+        title: true,
+        settlementAccount: { select: { scopeType: true, scopeRefId: true } },
+      },
+    });
+
+    const orphaned = campaigns.filter(
+      (campaign) =>
+        campaign.settlementAccount.scopeType === 'region' &&
+        campaign.settlementAccount.scopeRefId !== nextRegionId,
+    );
+
+    if (orphaned.length > 0) {
+      throw new ConflictException(
+        `Moving this branch would leave campaigns settling into an account that no longer covers them: ${orphaned
+          .map((campaign) => `"${campaign.title}"`)
+          .join(', ')}`,
+      );
+    }
+  }
+
   async create(churchId: string, caller: TenantStaff, input: CreateBranchInput) {
     await this.assertChurchExists(churchId);
     if (input.regionId) {
@@ -121,6 +165,12 @@ export class BranchService {
           scopeRefId: input.regionId,
         });
       }
+
+      await this.assertCampaignsStillCoveredAfterMove(
+        churchId,
+        id,
+        typeof input.regionId === 'string' ? input.regionId : null,
+      );
     }
 
     try {

@@ -362,22 +362,50 @@ export class CampaignService {
       throw new BadRequestException('endDate must not be before startDate');
     }
 
-    const updated = await this.prisma.campaign.update({
-      where: { id },
-      data: {
-        ...(input.title !== undefined ? { title: input.title } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
-        ...(input.targetAmountKobo !== undefined
-          ? { targetAmountKobo: koboToBigint(input.targetAmountKobo) }
-          : {}),
-        ...(input.startDate !== undefined ? { startDate: nextStart } : {}),
-        ...(input.endDate !== undefined ? { endDate: nextEnd } : {}),
-        ...(scopeChanging && requestedScope
-          ? { scopeType: requestedScope.scopeType, scopeRefId: requestedScope.scopeRefId }
-          : {}),
-        ...(accountChanging ? { settlementAccountId: input.settlementAccountId } : {}),
-      },
+    // The counts above are an early, friendly check — a Payment or DonationIntent
+    // could still land in the gap between that count and this write. Re-verify
+    // inside the same transaction as the write itself, so the two can never
+    // disagree: either the lockout still holds and nothing is written, or it
+    // doesn't and the write is the very next statement on the same snapshot.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (scopeChanging || accountChanging) {
+        const [paymentCount, intentCount] = await Promise.all([
+          tx.payment.count({ where: { churchId, campaignId: id } }),
+          scopeChanging
+            ? tx.donationIntent.count({ where: { churchId, campaignId: id } })
+            : Promise.resolve(0),
+        ]);
+
+        if (accountChanging && paymentCount > 0) {
+          throw new ConflictException(
+            `This campaign has ${paymentCount} settled payment(s) against its current settlement account; repointing it would make that history unexplainable`,
+          );
+        }
+
+        if (scopeChanging && (intentCount > 0 || paymentCount > 0)) {
+          throw new ConflictException(
+            'This campaign already has giving against it, so its scope can no longer be changed',
+          );
+        }
+      }
+
+      return tx.campaign.update({
+        where: { id },
+        data: {
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.targetAmountKobo !== undefined
+            ? { targetAmountKobo: koboToBigint(input.targetAmountKobo) }
+            : {}),
+          ...(input.startDate !== undefined ? { startDate: nextStart } : {}),
+          ...(input.endDate !== undefined ? { endDate: nextEnd } : {}),
+          ...(scopeChanging && requestedScope
+            ? { scopeType: requestedScope.scopeType, scopeRefId: requestedScope.scopeRefId }
+            : {}),
+          ...(accountChanging ? { settlementAccountId: input.settlementAccountId } : {}),
+        },
+      });
     });
 
     return toPublic(updated);

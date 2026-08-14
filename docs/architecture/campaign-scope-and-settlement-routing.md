@@ -103,6 +103,11 @@ each linked campaign — checked by hand against `covers`, not by a dedicated eq
 [ADR-0021](../../apps/api/docs/adr/0021-campaign-settlement-routing-and-repoint-lockout.md) for the
 edge case that check has to get right.
 
+A third mutation path can break the same invariant: `BranchService.update` moving a branch to a
+different region. `assertCampaignsStillCoveredAfterMove` is that module's mirror of the same check —
+see ADR-0021 for why a branch move needed one too, and why all three checks re-verify inside the
+write's own transaction rather than trusting an earlier count.
+
 ## The settlement attribution join — answering #141
 
 Before this ticket, "how much did Branch X raise into Branch X's own bank account" had no answer in

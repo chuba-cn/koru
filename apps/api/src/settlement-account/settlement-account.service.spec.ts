@@ -44,7 +44,7 @@ const CHURCH_ACCOUNT = {
 };
 
 function fakePrisma() {
-  return {
+  const client = {
     church: {
       findUnique: vi.fn(({ where }: { where: { id: string } }) =>
         Promise.resolve(where.id === CHURCH ? { id: CHURCH, name: 'Grace Chapel' } : null),
@@ -73,8 +73,14 @@ function fakePrisma() {
       findMany: vi.fn(() => Promise.resolve([] as { id: string }[])),
     },
     campaign: {
+      count: vi.fn(() => Promise.resolve(0)),
       findMany: vi.fn(() => Promise.resolve([] as { title: string }[])),
     },
+  };
+
+  return {
+    ...client,
+    $transaction: vi.fn((fn: (tx: typeof client) => unknown) => fn(client)),
   };
 }
 
@@ -844,6 +850,7 @@ describe('SettlementAccountService', () => {
 
     it('refuses to narrow scope down to a branch when a campaign settling into it is region-scoped', async () => {
       const prisma = fakePrisma();
+      prisma.campaign.count.mockResolvedValueOnce(1);
       prisma.campaign.findMany.mockResolvedValueOnce([{ title: 'Building Fund' }]);
       const service = new SettlementAccountService(
         prisma as never,
@@ -862,6 +869,7 @@ describe('SettlementAccountService', () => {
 
     it('names every orphaned campaign in the conflict message', async () => {
       const prisma = fakePrisma();
+      prisma.campaign.count.mockResolvedValueOnce(2);
       prisma.campaign.findMany.mockResolvedValueOnce([
         { title: 'Building Fund' },
         { title: 'Youth Camp' },
@@ -912,7 +920,7 @@ describe('SettlementAccountService', () => {
         scopeRefId: BRANCH,
       });
 
-      expect(prisma.campaign.findMany).toHaveBeenCalledWith(
+      expect(prisma.campaign.count).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
             NOT: { scopeType: 'branch', scopeRefId: BRANCH },
@@ -940,7 +948,7 @@ describe('SettlementAccountService', () => {
           where: expect.objectContaining({ churchId: CHURCH, regionId: REGION }),
         }),
       );
-      expect(prisma.campaign.findMany).toHaveBeenCalledWith(
+      expect(prisma.campaign.count).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
             NOT: {

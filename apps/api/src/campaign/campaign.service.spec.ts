@@ -71,7 +71,7 @@ const CAMPAIGN = {
 };
 
 function fakePrisma(overrides: { paymentCount?: number; intentCount?: number } = {}) {
-  return {
+  const client = {
     church: {
       findUnique: vi.fn(({ where }: { where: { id: string } }) =>
         Promise.resolve(where.id === CHURCH ? { id: CHURCH, name: 'Grace Chapel' } : null),
@@ -104,6 +104,11 @@ function fakePrisma(overrides: { paymentCount?: number; intentCount?: number } =
     donationIntent: {
       count: vi.fn(() => Promise.resolve(overrides.intentCount ?? 0)),
     },
+  };
+
+  return {
+    ...client,
+    $transaction: vi.fn((fn: (tx: typeof client) => unknown) => fn(client)),
   };
 }
 
